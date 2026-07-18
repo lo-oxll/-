@@ -44,6 +44,7 @@ const PAGES = [
     { id: 'reports', label: 'التقارير المالية', icon: '📈' },
   ]},
   { section: 'الإدارة', items: [
+    { id: 'fiscal', label: 'السنوات المالية', icon: '📅' },
     { id: 'users', label: 'المستخدمون والصلاحيات', icon: '👤', roles: ['admin'] },
     { id: 'auditlog', label: 'سجل المراجعة', icon: '🔐' },
   ]},

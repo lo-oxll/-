@@ -63,9 +63,10 @@ const DB = {
     await this.log('create_receipt', 'receipt_docs', rdoc.id, { doc_num: doc.doc_num, items: items.length });
     return rdoc;
   },
-  async listReceipts(limit = 50) {
-    const { data, error } = await sb.from('receipt_docs').select('*, warehouses(code,name)')
-      .order('created_at', { ascending: false }).limit(limit);
+  async listReceipts(limit = 50, fiscalYearId = null) {
+    let q = sb.from('receipt_docs').select('*, warehouses(code,name)').order('created_at', { ascending: false }).limit(limit);
+    if (fiscalYearId) q = q.eq('fiscal_year_id', fiscalYearId);
+    const { data, error } = await q;
     if (error) throw error; return data;
   },
   async receiptItems(receiptId) {
@@ -86,9 +87,10 @@ const DB = {
     await this.log('create_issue', 'issue_docs', idoc.id, { doc_num: doc.doc_num, items: items.length });
     return idoc;
   },
-  async listIssues(limit = 50) {
-    const { data, error } = await sb.from('issue_docs').select('*, warehouses(code,name)')
-      .order('created_at', { ascending: false }).limit(limit);
+  async listIssues(limit = 50, fiscalYearId = null) {
+    let q = sb.from('issue_docs').select('*, warehouses(code,name)').order('created_at', { ascending: false }).limit(limit);
+    if (fiscalYearId) q = q.eq('fiscal_year_id', fiscalYearId);
+    const { data, error } = await q;
     if (error) throw error; return data;
   },
   async issueItems(issueId) {
@@ -122,6 +124,26 @@ const DB = {
     if (e2) throw e2;
     await this.log('post_journal', 'journal_entries', je.id, { entry_no: entry.entry_no });
     return je;
+  },
+
+  // ── السنوات المالية ─────────────────────────────
+  async listFiscalYears() {
+    const { data, error } = await sb.from('fiscal_years').select('*').order('year', { ascending: false });
+    if (error) throw error; return data;
+  },
+  async activeFiscalYear() {
+    const { data, error } = await sb.from('fiscal_years').select('*').eq('is_active', true).maybeSingle();
+    if (error) throw error; return data;
+  },
+  async closeFiscalYear(newYear) {
+    const { data, error } = await sb.rpc('fn_close_fiscal_year', { p_new_year: newYear });
+    if (error) throw error;
+    await this.log('close_fiscal_year', 'fiscal_years', null, { new_year: newYear });
+    return data;
+  },
+  async openingBalances(fiscalYearId) {
+    const { data, error } = await sb.from('v_opening_balances').select('*').eq('fiscal_year_id', fiscalYearId).order('seq');
+    if (error) throw error; return data;
   },
 
   // ── سجل المراجعة ─────────────────────────────

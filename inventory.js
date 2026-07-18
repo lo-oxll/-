@@ -69,7 +69,10 @@ PAGE_RENDER.materials = async (root, term = '') => {
   root.innerHTML = `
     <div class="ph"><div><div class="ph-title">دليل المواد</div><div class="ph-sub">${mats.length} مادة</div></div>
       <div class="ph-actions">
-        <input id="mat-search" placeholder="بحث بالاسم أو الرقم المخزني..." style="width:240px" value="${term}">
+        <input id="mat-search" placeholder="بحث بالاسم أو الرقم المخزني..." style="width:220px" value="${term}">
+        <button class="btn btn-o btn-sm" onclick="exportMaterialsExcel()">⬇ تصدير إكسل</button>
+        <button class="btn btn-o btn-sm" onclick="document.getElementById('mat-import-file').click()">⬆ استيراد إكسل</button>
+        <input type="file" id="mat-import-file" accept=".xlsx,.xls" class="hidden" onchange="importMaterialsExcel(this.files[0])">
         <button class="btn btn-p" onclick="openMatModal()">+ مادة جديدة</button>
       </div></div>
     <div class="card"><div class="itw"><table><thead><tr><th>الرقم المخزني</th><th>الاسم</th><th>الوحدة</th><th>التصنيف</th><th>حد إعادة الطلب</th><th></th></tr></thead><tbody>
@@ -79,6 +82,55 @@ PAGE_RENDER.materials = async (root, term = '') => {
   document.getElementById('mat-search').addEventListener('input', debounce(e => PAGE_RENDER.materials(root, e.target.value), 300));
 };
 function debounce(fn, ms) { let t; return (...a) => { clearTimeout(t); t = setTimeout(() => fn(...a), ms); }; }
+
+// ── تصدير دليل المواد إلى إكسل ──────────────────────────────
+window.exportMaterialsExcel = async () => {
+  const mats = await DB.listMaterials();
+  const rows = mats.map((m, i) => ({
+    'م': i + 1, 'الرقم المخزني': m.store_num, 'اسم المادة': m.name,
+    'الوحدة': m.unit, 'التصنيف': m.category || '', 'حد إعادة الطلب': m.min_qty, 'ملاحظات': m.notes || '',
+  }));
+  const ws = XLSX.utils.json_to_sheet(rows);
+  ws['!cols'] = [{wch:5},{wch:16},{wch:32},{wch:10},{wch:16},{wch:14},{wch:24}];
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, 'دليل المواد');
+  XLSX.writeFile(wb, `دليل_المواد_${todayISO()}.xlsx`);
+};
+
+// ── استيراد دليل المواد من إكسل ──────────────────────────────
+// الأعمدة المتوقعة (بالترتيب أو بالاسم): الرقم المخزني | اسم المادة | الوحدة | التصنيف | حد إعادة الطلب | ملاحظات
+window.importMaterialsExcel = async (file) => {
+  if (!file) return;
+  try {
+    const buf = await file.arrayBuffer();
+    const wb = XLSX.read(buf, { type: 'array' });
+    const ws = wb.Sheets[wb.SheetNames[0]];
+    const rows = XLSX.utils.sheet_to_json(ws, { defval: '' });
+    if (!rows.length) { toast('الملف فارغ', 'e'); return; }
+
+    let ok = 0, fail = 0; const errors = [];
+    for (const [i, r] of rows.entries()) {
+      const store_num = String(r['الرقم المخزني'] ?? r['store_num'] ?? '').trim();
+      const name = String(r['اسم المادة'] ?? r['الاسم'] ?? r['name'] ?? '').trim();
+      if (!store_num || !name) { fail++; errors.push(`صف ${i + 2}: الرقم المخزني أو الاسم مفقود`); continue; }
+      try {
+        await DB.upsertMaterial({
+          store_num, name,
+          unit: String(r['الوحدة'] ?? r['unit'] ?? 'قطعة').trim() || 'قطعة',
+          category: String(r['التصنيف'] ?? r['category'] ?? '').trim(),
+          min_qty: Number(r['حد إعادة الطلب'] ?? r['min_qty'] ?? 0) || 0,
+          notes: String(r['ملاحظات'] ?? r['notes'] ?? '').trim(),
+        });
+        ok++;
+      } catch (e) { fail++; errors.push(`صف ${i + 2} (${store_num}): ${e.message}`); }
+    }
+    await DB.log('import_materials', 'materials', null, { ok, fail, total: rows.length });
+    toast(`تم الاستيراد: ${ok} نجح${fail ? `، ${fail} فشل` : ''}`, fail ? 'e' : 's');
+    if (errors.length) console.warn('أخطاء الاستيراد:', errors);
+    document.getElementById('mat-import-file').value = '';
+    go('materials');
+  } catch (e) { toast('تعذر قراءة الملف: ' + e.message, 'e'); }
+};
 
 window.openMatModal = (m = null) => {
   showModal(m ? 'تعديل مادة' : 'مادة جديدة', `
@@ -130,8 +182,26 @@ function addItemRow(prefix, isReceive) {
   const whGetter = () => gv(prefix + '-wh');
 
   bindAutocomplete(searchInp, portal,
-    async term => term ? await DB.listMaterials(term) : [],
+    async term => {
+      if (!term) return [];
+      const found = await DB.listMaterials(term);
+      // إذا لا يوجد تطابق تام على الرقم المخزني، أضف خيار "تعريف مادة جديدة" (فقط بوثائق الاستلام)
+      const exact = found.some(m => m.store_num.toLowerCase() === term.trim().toLowerCase());
+      if (isReceive && !exact && term.trim().length >= 2) found.push({ __new: true, store_num: term.trim() });
+      return found;
+    },
     async m => {
+      if (m.__new) {
+        const name = prompt(`تعريف مادة جديدة بالرقم المخزني "${m.store_num}"\nأدخل اسم المادة:`);
+        if (!name || !name.trim()) return;
+        const unit = prompt('وحدة القياس (اختياري):', 'قطعة') || 'قطعة';
+        try {
+          const created = await DB.upsertMaterial({ store_num: m.store_num, name: name.trim(), unit, category: '', min_qty: 0, notes: 'أُنشئت تلقائياً من وثيقة استلام' });
+          await DB.log('auto_create_material', 'materials', created.id, { store_num: m.store_num, source: 'receipt' });
+          toast('تم تعريف المادة الجديدة', 's');
+          m = created;
+        } catch (e) { toast('تعذر إنشاء المادة: ' + e.message, 'e'); return; }
+      }
       searchInp.value = `${m.store_num} — ${m.name}`;
       row.querySelector('.mat-id').value = m.id;
       row.querySelector('.mat-unit').textContent = m.unit;
@@ -144,7 +214,9 @@ function addItemRow(prefix, isReceive) {
       }
       recalcItems(prefix);
     },
-    (m, first) => `<div class="ac-item ${first ? 'hi' : ''}"><span class="ac-code">${m.store_num}</span><span>${m.name}</span></div>`
+    (m, first) => m.__new
+      ? `<div class="ac-item ${first ? 'hi' : ''}" style="color:var(--ok);font-weight:700">+ تعريف مادة جديدة برقم "${m.store_num}"</div>`
+      : `<div class="ac-item ${first ? 'hi' : ''}"><span class="ac-code">${m.store_num}</span><span>${m.name}</span></div>`
   );
   row.querySelectorAll('.qty-in, .price-in').forEach(inp => inp.addEventListener('input', () => recalcItems(prefix)));
   renumberRows(prefix);
@@ -268,13 +340,19 @@ window.submitIssue = async () => {
 };
 
 // ── سجل الوثائق ──────────────────────────────
-PAGE_RENDER.docs = async (root, tab = 'receipts') => {
-  const [receipts, issues] = await Promise.all([DB.listReceipts(100), DB.listIssues(100)]);
+PAGE_RENDER.docs = async (root, tab = 'receipts', fyId = '') => {
+  const isArchiveMode = can('admin') && fyId;
+  const fys = can('admin') ? await DB.listFiscalYears() : [];
+  const [receipts, issues] = await Promise.all([DB.listReceipts(100, fyId || null), DB.listIssues(100, fyId || null)]);
   root.innerHTML = `
-    <div class="ph"><div><div class="ph-title">سجل الوثائق</div><div class="ph-sub">جميع وثائق الاستلام والإصدار المرحّلة</div></div>
+    <div class="ph"><div><div class="ph-title">سجل الوثائق</div><div class="ph-sub">${isArchiveMode ? '📦 عرض أرشيف — للقراءة فقط' : 'جميع وثائق الاستلام والإصدار المرحّلة (السنة الحالية)'}</div></div>
       <div class="ph-actions">
-        <button class="btn ${tab === 'receipts' ? 'btn-p' : 'btn-o'} btn-sm" onclick="PAGE_RENDER.docs(document.getElementById('page-root'),'receipts')">استلام (${receipts.length})</button>
-        <button class="btn ${tab === 'issues' ? 'btn-p' : 'btn-o'} btn-sm" onclick="PAGE_RENDER.docs(document.getElementById('page-root'),'issues')">إصدار (${issues.length})</button>
+        ${can('admin') ? `<select onchange="PAGE_RENDER.docs(document.getElementById('page-root'),'${tab}',this.value)" style="width:170px">
+          <option value="">السنة الحالية</option>
+          ${fys.map(f => `<option value="${f.id}" ${f.id === fyId ? 'selected' : ''}>${f.year}${f.is_active ? ' (نشطة)' : ' (أرشيف)'}</option>`).join('')}
+        </select>` : ''}
+        <button class="btn ${tab === 'receipts' ? 'btn-p' : 'btn-o'} btn-sm" onclick="PAGE_RENDER.docs(document.getElementById('page-root'),'receipts','${fyId}')">استلام (${receipts.length})</button>
+        <button class="btn ${tab === 'issues' ? 'btn-p' : 'btn-o'} btn-sm" onclick="PAGE_RENDER.docs(document.getElementById('page-root'),'issues','${fyId}')">إصدار (${issues.length})</button>
       </div></div>
     <div class="card"><div class="itw"><table><thead><tr>
       ${tab === 'receipts' ? '<th>الوثيقة</th><th>التاريخ</th><th>المخزن</th><th>المورّد</th><th>الإجمالي</th><th></th>'
