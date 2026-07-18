@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html dir="rtl" lang="ar">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>نظام السيطرة المخزنية والمحاسبية</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🏛</text></svg>">
+<link rel="stylesheet" href="css/styles.css">
+</head>
+<body>
+
+<!-- ═══════════ شاشة الدخول ═══════════ -->
+<div id="login-screen">
+  <div class="login-box">
+    <div class="seal">🏛</div>
+    <div class="login-title">نظام السيطرة المخزنية والمحاسبية</div>
+    <div class="login-sub">تسجيل الدخول للمتابعة</div>
+
+    <div id="pane-login">
+      <div class="login-field"><label>البريد الإلكتروني</label><input id="l-email" type="email" autocomplete="username"></div>
+      <div class="login-field"><label>كلمة المرور</label><input id="l-pass" type="password" autocomplete="current-password"></div>
+      <button class="btn-login" onclick="doLogin()">تسجيل الدخول</button>
+      <div class="login-err" id="login-err"></div>
+      <div class="login-switch">لا تملك حساباً؟ <a href="javascript:showAuthPane('signup')">إنشاء حساب جديد</a></div>
+    </div>
+
+    <div id="pane-signup" class="hidden">
+      <div class="login-field"><label>الاسم الكامل</label><input id="s-name"></div>
+      <div class="login-field"><label>البريد الإلكتروني</label><input id="s-email" type="email"></div>
+      <div class="login-field"><label>كلمة المرور</label><input id="s-pass" type="password"></div>
+      <div class="login-field"><label>تأكيد كلمة المرور</label><input id="s-pass2" type="password"></div>
+      <button class="btn-login" onclick="doSignup()">إنشاء الحساب</button>
+      <div class="login-err" id="signup-err"></div>
+      <div class="login-switch">تملك حساباً؟ <a href="javascript:showAuthPane('login')">تسجيل الدخول</a></div>
+    </div>
+
+    <div class="setup-hint" style="font-size:11px;color:var(--ink3);margin-top:20px;background:var(--surface2);border-radius:8px;padding:14px;text-align:right;line-height:1.8">
+      أول حساب يُنشأ يحصل تلقائياً على دور <b style="color:var(--gold)">محاسب</b>. لترقيته إلى <b style="color:var(--gold)">مدير النظام</b> نفّذ في Supabase SQL Editor:<br>
+      <code style="direction:ltr;display:block;margin-top:4px">update profiles set role='admin' where full_name='اسمك';</code>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════ هيكل التطبيق ═══════════ -->
+<div id="app-shell" class="hidden">
+  <aside class="sidebar" id="sidebar">
+    <div class="sidebar-brand">
+      <div class="brand-mark">
+        <div class="brand-seal">🏛</div>
+        <div><div class="brand-name">السيطرة المخزنية</div><div class="brand-sub">والمحاسبية</div></div>
+      </div>
+    </div>
+    <nav id="sidebar-nav"></nav>
+    <div class="sidebar-foot">
+      <div class="user-card">
+        <div class="user-avatar" id="user-avatar">?</div>
+        <div><div class="user-name" id="user-name"></div><div class="user-role" id="user-role"></div></div>
+      </div>
+      <button class="btn-out" onclick="toggleTheme()" style="margin-bottom:8px">🌓 تبديل المظهر</button>
+      <button class="btn-out" onclick="doLogout()">تسجيل الخروج</button>
+    </div>
+  </aside>
+  <main class="main">
+    <div id="page-root"></div>
+  </main>
+</div>
+
+<div class="toast-wrap" id="toast-wrap"></div>
+
+<!-- Supabase JS SDK -->
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+
+<script src="js/config.js"></script>
+<script src="js/supabaseClient.js"></script>
+<script src="js/app.js"></script>
+<script src="js/auth.js"></script>
+<script src="js/inventory.js"></script>
+<script src="js/accounting.js"></script>
+<script src="js/reports.js"></script>
+<script src="js/admin.js"></script>
+</body>
+</html>
