@@ -52,6 +52,11 @@ window.openAccModal = (a = null) => {
       if (a) {
         const { error } = await sb.from('chart_of_accounts').update({ code, name, type, is_cogs }).eq('id', a.id);
         if (error) throw error;
+        // تدقيق قبل/بعد لتعديلات دليل الحسابات (مثل تغيير رمز أو تصنيف حساب مؤثر على التقارير)
+        await DB.log('update_account', 'chart_of_accounts', a.id, {
+          old_value: { code: a.code, name: a.name, type: a.type, is_cogs: a.is_cogs },
+          new_value: { code, name, type, is_cogs },
+        });
         toast('تم تحديث الحساب', 's');
       } else {
         const { error } = await sb.from('chart_of_accounts').insert({ code, name, type, is_cogs });
@@ -63,10 +68,11 @@ window.openAccModal = (a = null) => {
   });
 };
 
-PAGE_RENDER.journal = async (root) => {
-  const entries = await DB.journalEntries(100);
+const JOURNAL_PAGE_SIZE = 50;
+PAGE_RENDER.journal = async (root, pageSize = JOURNAL_PAGE_SIZE) => {
+  const entries = await DB.journalEntries(pageSize);
   root.innerHTML = `
-    <div class="ph"><div><div class="ph-title">القيود المحاسبية</div><div class="ph-sub">تُنشأ تلقائياً من وثائق الاستلام/الإصدار، أو يدوياً</div></div>
+    <div class="ph"><div><div class="ph-title">القيود المحاسبية</div><div class="ph-sub">تُنشأ تلقائياً من وثائق الاستلام/الإصدار، أو يدوياً — عرض ${entries.length} من أصل ${entries.total}</div></div>
       <div class="ph-actions">
         <button class="btn btn-o btn-sm" onclick="exportJournalExcel()">⬇ تصدير إكسل</button>
         ${can('admin','central_accountant') ? '<button class="btn btn-p" onclick="openJournalModal()">+ قيد يدوي</button>' : ''}
@@ -77,6 +83,7 @@ PAGE_RENDER.journal = async (root) => {
       <div class="itw"><table><thead><tr><th>الحساب</th><th>مدين</th><th>دائن</th></tr></thead><tbody>
         ${(e.journal_lines||[]).map(l => `<tr><td>${l.chart_of_accounts?.code} — ${l.chart_of_accounts?.name}</td><td class="mono">${l.debit ? fmt(l.debit) : '—'}</td><td class="mono">${l.credit ? fmt(l.credit) : '—'}</td></tr>`).join('')}
       </tbody></table></div></div>`).join('') || '<div class="card ec">لا توجد قيود بعد</div>'}
+    ${entries.length < entries.total ? `<div style="text-align:center;padding:12px"><button class="btn btn-o btn-sm" onclick="PAGE_RENDER.journal(document.getElementById('page-root'), ${pageSize + JOURNAL_PAGE_SIZE})">تحميل المزيد (${entries.total - entries.length} متبقٍ)</button></div>` : ''}
   `;
 };
 
