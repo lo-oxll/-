@@ -21,8 +21,19 @@ PAGE_RENDER.dashboard = async (root) => {
       <div class="stat"><div class="stat-lbl">قيمة المخزون الحالية</div><div class="stat-val gold">${fmt(invValue)}</div></div>
     </div>
 
-    <div id="dash-chart-controls"></div>
     <div class="fg2">
+      <div class="card" style="grid-column:1/-1">
+        <div class="ph" style="margin:0 0 4px"><div></div>
+          <div class="ph-actions"><label style="margin:0 8px 0 0;align-self:center;font-size:11px;color:var(--ink3)">فترة الرسوم البيانية</label>
+            <select id="dash-period" onchange="renderDashboardCharts(Number(this.value))" style="width:140px">
+              <option value="3">آخر 3 أشهر</option>
+              <option value="6" selected>آخر 6 أشهر</option>
+              <option value="12">آخر 12 شهر</option>
+              <option value="24">آخر 24 شهر</option>
+            </select>
+          </div>
+        </div>
+      </div>
       <div class="card"><div class="card-title">📈 حركة المخزون الشهرية (قيمة الاستلام مقابل الإصدار)</div>
         <canvas id="chart-movement" height="230"></canvas></div>
       <div class="card"><div class="card-title">🏆 أعلى المواد استهلاكاً (بالكمية)</div>
@@ -38,8 +49,8 @@ PAGE_RENDER.dashboard = async (root) => {
       </div>
       <div class="card">
         <div class="card-title">آخر وثائق الإصدار</div>
-        ${issues.length ? `<div class="itw"><table><thead><tr><th>الوثيقة</th><th>التاريخ</th><th>الإجمالي</th></tr></thead><tbody>
-          ${issues.map(r => `<tr><td><span class="doc-num">${r.doc_num}</span></td><td>${r.doc_date}</td><td class="gold-txt">${fmt(r.total)}</td></tr>`).join('')}
+        ${issues.length ? `<div class="itw"><table><thead><tr><th>الوثيقة</th><th>التاريخ</th><th>المخزن</th><th>الإجمالي</th></tr></thead><tbody>
+          ${issues.map(r => `<tr><td><span class="doc-num">${r.doc_num}</span></td><td>${r.doc_date}</td><td>${r.warehouses?.name || ''}</td><td class="gold-txt">${fmt(r.total)}</td></tr>`).join('')}
         </tbody></table></div>` : `<div class="ec">لا توجد وثائق إصدار بعد</div>`}
       </div>
     </div>
@@ -48,52 +59,17 @@ PAGE_RENDER.dashboard = async (root) => {
       ${low.slice(0,5).map(l => `<tr><td class="mono">${l.store_num}</td><td>${l.name}</td><td>${l.warehouse_name}</td><td class="chip-danger" style="padding:2px 8px;border-radius:6px">${fmtQty(l.qty_on_hand)}</td><td>${fmtQty(l.min_qty)}</td></tr>`).join('')}
       </tbody></table></div></div>` : ''}
   `;
-  renderDashboardCharts();
+  renderDashboardCharts(6);
 };
 
-// ── رسم اللوحة البيانية (Chart.js) + فلترة بالتاريخ ──────────────────────────────
+// ── رسم اللوحة البيانية (Chart.js) ──────────────────────────────
 window.__dashCharts = window.__dashCharts || [];
-window.__dashRange = window.__dashRange || { months: 6, startDate: '', endDate: '' };
-
-function dashRangeControlsHTML() {
-  const r = window.__dashRange;
-  return `<div class="ph-actions" style="margin-bottom:10px;flex-wrap:wrap">
-    <select id="dash-range-preset" onchange="setDashRangePreset(this.value)">
-      <option value="3" ${r.months===3&&!r.startDate?'selected':''}>آخر 3 أشهر</option>
-      <option value="6" ${r.months===6&&!r.startDate?'selected':''}>آخر 6 أشهر</option>
-      <option value="12" ${r.months===12&&!r.startDate?'selected':''}>آخر 12 شهر</option>
-      <option value="custom" ${r.startDate?'selected':''}>مدى مخصّص...</option>
-    </select>
-    <input type="date" id="dash-start" value="${r.startDate}" class="${r.startDate ? '' : 'hidden'}" onchange="applyDashCustomRange()">
-    <input type="date" id="dash-end" value="${r.endDate}" class="${r.startDate ? '' : 'hidden'}" onchange="applyDashCustomRange()">
-  </div>`;
-}
-window.setDashRangePreset = (val) => {
-  if (val === 'custom') {
-    window.__dashRange = { months: 6, startDate: todayISO(), endDate: todayISO() };
-    go('dashboard');
-  } else {
-    window.__dashRange = { months: Number(val), startDate: '', endDate: '' };
-    renderDashboardCharts();
-  }
-};
-window.applyDashCustomRange = () => {
-  const s = gv('dash-start'), e = gv('dash-end');
-  if (!s || !e) return;
-  window.__dashRange = { months: 6, startDate: s, endDate: e };
-  renderDashboardCharts();
-};
-
-async function renderDashboardCharts() {
+async function renderDashboardCharts(months = 6) {
   window.__dashCharts.forEach(c => c.destroy());
   window.__dashCharts = [];
-  const controlsHost = document.getElementById('dash-chart-controls');
-  if (controlsHost) controlsHost.innerHTML = dashRangeControlsHTML();
   if (typeof Chart === 'undefined') return; // تحميل المكتبة قد يكون بطيئاً بالشبكات الضعيفة
 
-  const r = window.__dashRange;
-  const dateRange = r.startDate ? { startDate: r.startDate, endDate: r.endDate } : null;
-  const [movement, topMats] = await Promise.all([DB.monthlyMovementChart(r.months, dateRange), DB.topConsumedMaterials(8)]);
+  const [movement, topMats] = await Promise.all([DB.monthlyMovementChart(months), DB.topConsumedMaterials(8, months)]);
 
   const elM = document.getElementById('chart-movement');
   if (elM) {
@@ -166,27 +142,40 @@ window.deleteWarehouseConfirm = async (id, name) => {
   } catch (e) { toast('تعذر الحذف: ' + e.message, 'e'); }
 };
 
-// ── دليل المواد (مع تصفح بالصفحات "تحميل المزيد") ──────────────────────────────
+// ── دليل المواد ──────────────────────────────
 const MAT_PAGE_SIZE = 50;
-PAGE_RENDER.materials = async (root, term = '', pageSize = MAT_PAGE_SIZE) => {
-  const { rows: mats, total } = await DB.listMaterials(term, pageSize, 0);
+PAGE_RENDER.materials = async (root, term = '') => {
+  window.__matState = { term, offset: 0, items: [], hasMore: false };
+  await loadMoreMaterials(root, true);
+};
+async function loadMoreMaterials(root, reset = false) {
+  const st = window.__matState;
+  const chunk = await DB.listMaterials(st.term, MAT_PAGE_SIZE, st.offset);
+  st.items = reset ? chunk : st.items.concat(chunk);
+  st.offset += chunk.length;
+  st.hasMore = chunk.length === MAT_PAGE_SIZE;
+  renderMaterialsPage(root, st);
+}
+window.loadMoreMaterials = loadMoreMaterials;
+
+function renderMaterialsPage(root, st) {
   root.innerHTML = `
-    <div class="ph"><div><div class="ph-title">دليل المواد</div><div class="ph-sub">عرض ${mats.length} من أصل ${total} مادة</div></div>
+    <div class="ph"><div><div class="ph-title">دليل المواد</div><div class="ph-sub">${st.items.length} مادة محمّلة${st.hasMore ? ' — يوجد المزيد' : ''}</div></div>
       <div class="ph-actions">
-        <input id="mat-search" placeholder="بحث بالاسم أو الرقم المخزني..." style="width:220px" value="${term}">
-        <button class="btn btn-o btn-sm" onclick="exportMaterialsExcel()">⬇ تصدير إكسل</button>
+        <input id="mat-search" placeholder="بحث بالاسم أو الرقم المخزني..." style="width:220px" value="${st.term}">
+        <button class="btn btn-o btn-sm" onclick="exportMaterialsExcel()">⬇ تصدير إكسل (الكل)</button>
         <button class="btn btn-o btn-sm" onclick="document.getElementById('mat-import-file').click()">⬆ استيراد إكسل</button>
         <input type="file" id="mat-import-file" accept=".xlsx,.xls" class="hidden" onchange="importMaterialsExcel(this.files[0])">
         <button class="btn btn-p" onclick="openMatModal()">+ مادة جديدة</button>
       </div></div>
     <div class="card"><div class="itw"><table><thead><tr><th>الرقم المخزني</th><th>الاسم</th><th>الوحدة</th><th>التصنيف</th><th>حد إعادة الطلب</th><th></th></tr></thead><tbody>
-      ${mats.map(m => `<tr><td class="mono">${m.store_num}</td><td>${m.name}</td><td>${m.unit}</td><td>${m.category || '—'}</td><td>${fmtQty(m.min_qty)}</td>
+      ${st.items.map(m => `<tr><td class="mono">${m.store_num}</td><td>${m.name}</td><td>${m.unit}</td><td>${m.category || '—'}</td><td>${fmtQty(m.min_qty)}</td>
         <td><button class="btn btn-o btn-sm" onclick='openMatModal(${JSON.stringify(m).replace(/'/g,"&#39;")})'>تعديل</button></td></tr>`).join('') || '<tr><td colspan="6" class="ec">لا توجد نتائج</td></tr>'}
     </tbody></table></div>
-    ${mats.length < total ? `<div style="text-align:center;padding:12px"><button class="btn btn-o btn-sm" onclick="PAGE_RENDER.materials(document.getElementById('page-root'), '${term.replace(/'/g,"&#39;")}', ${pageSize + MAT_PAGE_SIZE})">تحميل المزيد (${total - mats.length} متبقٍ)</button></div>` : ''}
+    ${st.hasMore ? `<div class="form-foot" style="justify-content:center"><button class="btn btn-o" onclick="loadMoreMaterials(document.getElementById('page-root'))">تحميل المزيد ⬇</button></div>` : ''}
     </div>`;
   document.getElementById('mat-search').addEventListener('input', debounce(e => PAGE_RENDER.materials(root, e.target.value), 300));
-};
+}
 function debounce(fn, ms) { let t; return (...a) => { clearTimeout(t); t = setTimeout(() => fn(...a), ms); }; }
 
 // ── تصدير دليل المواد إلى إكسل ──────────────────────────────
@@ -251,16 +240,8 @@ window.openMatModal = (m = null) => {
   `, async () => {
     const store_num = gv('m-mat-sn'), name = gv('m-mat-name');
     if (!store_num || !name) { toast('الرقم المخزني والاسم مطلوبان', 'e'); return false; }
-    const payload = { store_num, name, unit: gv('m-mat-unit') || 'قطعة', category: gv('m-mat-cat'), min_qty: Number(gv('m-mat-min')) || 0, notes: gv('m-mat-notes') };
     try {
-      const saved = await DB.upsertMaterial(payload);
-      // تدقيق قبل/بعد: نسجّل القيم القديمة والجديدة عند تعديل مادة موجودة لتوثيق أدق بسجل المراجعة
-      if (m) {
-        await DB.log('update_material', 'materials', saved.id, {
-          old_value: { name: m.name, unit: m.unit, category: m.category, min_qty: m.min_qty, notes: m.notes },
-          new_value: { name: payload.name, unit: payload.unit, category: payload.category, min_qty: payload.min_qty, notes: payload.notes },
-        });
-      }
+      await DB.upsertMaterial({ store_num, name, unit: gv('m-mat-unit') || 'قطعة', category: gv('m-mat-cat'), min_qty: Number(gv('m-mat-min')) || 0, notes: gv('m-mat-notes') });
       toast('تم الحفظ', 's'); go('materials'); return true;
     } catch (e) { toast('خطأ: ' + e.message, 'e'); return false; }
   });
@@ -388,14 +369,14 @@ function collectItemRows(prefix) {
 PAGE_RENDER.receive = async (root) => {
   const whs = await DB.listWarehouses();
   root.innerHTML = `
-    <div class="ph"><div><div class="ph-title">📥 استلام مخزني</div><div class="ph-sub">تسجيل وارد جديد إلى المخزن — السعر من وصل الاستلام</div></div></div>
+    <div class="ph"><div><div class="ph-title">📥 استلام مخزني</div><div class="ph-sub">تسجيل وارد جديد إلى المخزن — السعر من وصل الاستلام</div></div>
+      <div class="ph-actions"><button class="btn btn-o btn-sm" onclick="browseLastDoc('receipts')">📑 تصفح وثائق الاستلام السابقة</button></div></div>
     <div class="card">
       <div class="card-title">بيانات الوثيقة</div>
       <div class="fg">
         <div class="fgroup"><label>رقم الوثيقة *</label><input id="r-docnum"></div>
         <div class="fgroup"><label>تاريخ الوثيقة *</label><input type="date" id="r-date" value="${todayISO()}"></div>
         <div class="fgroup"><label>المخزن *</label><select id="r-wh"><option value="">اختر...</option>${whs.map(w => `<option value="${w.id}">${w.code} — ${w.name}</option>`).join('')}</select></div>
-        <div class="fgroup s2"><label>مرجع أمر الشراء (رقم/تاريخ)</label><input id="r-pref"></div>
       </div>
       <div class="fg2" style="margin-top:12px">
         <div class="fgroup"><label>ملاحظات</label><textarea id="r-notes"></textarea></div>
@@ -422,14 +403,14 @@ window.submitReceipt = async () => {
   if (items.some(i => i.unit_price <= 0)) { toast('يجب إدخال سعر الوصل لكل مادة مستلَمة', 'e'); return; }
   const attachFile = document.getElementById('r-attach')?.files?.[0] || null;
   try {
-    // لا تُجمع بيانات المورّد بعد الآن (تمت إزالتها من نظام الاستلام)
-    const rdoc = await DB.createReceipt({ doc_num: docnum, doc_date: date, warehouse_id: wh, purchase_ref: gv('r-pref'), notes: gv('r-notes'), created_by: ME.id }, items);
+    const rdoc = await DB.createReceipt({ doc_num: docnum, doc_date: date, warehouse_id: wh, supplier: '', purchase_ref: '', notes: gv('r-notes'), created_by: ME.id }, items);
     if (attachFile) {
       try { await DB.uploadReceiptAttachment(rdoc.id, attachFile); }
       catch (e) { toast('تم حفظ الوثيقة لكن تعذر رفع المرفق: ' + e.message, 'e'); }
     }
     toast('✅ تم حفظ وترحيل وثيقة الاستلام', 's');
-    go('docs');
+    window.__docSeq = null; // إبطال التسلسل المخزّن مؤقتاً ليعاد جلبه شاملاً الوثيقة الجديدة
+    viewDoc('receipts', rdoc.id, '');
   } catch (e) { toast('خطأ: ' + e.message, 'e'); }
 };
 
@@ -437,7 +418,8 @@ window.submitReceipt = async () => {
 PAGE_RENDER.issue = async (root) => {
   const whs = await DB.listWarehouses();
   root.innerHTML = `
-    <div class="ph"><div><div class="ph-title">📤 إصدار مخزني</div><div class="ph-sub">السعر يُحسب تلقائياً بالمتوسط الوزني المرجّح لحظة الحفظ</div></div></div>
+    <div class="ph"><div><div class="ph-title">📤 إصدار مخزني</div><div class="ph-sub">السعر يُحسب تلقائياً بالمتوسط الوزني المرجّح لحظة الحفظ</div></div>
+      <div class="ph-actions"><button class="btn btn-o btn-sm" onclick="browseLastDoc('issues')">📑 تصفح وثائق الإصدار السابقة</button></div></div>
     <div class="card">
       <div class="card-title">بيانات الوثيقة</div>
       <div class="fg">
@@ -477,81 +459,148 @@ window.submitIssue = async () => {
   const { rows: items, problems } = collectItemRows('i');
   if (problems.length) { alert('⚠️ لا يمكن الحفظ — تحقق من الصفوف التالية:\n\n' + problems.join('\n')); return; }
   if (!items.length) { toast('أضف مادة واحدة على الأقل مع الكمية', 'e'); return; }
-  // تحقق أولي من كفاية الرصيد على مستوى العميل (لتجربة استخدام أسرع فقط) —
-  // التحقق الفعلي والملزم صار داخل fn_post_issue_journal بقاعدة البيانات ضمن معاملة (transaction)
-  // مع قفل صف الرصيد (FOR UPDATE) لمنع race condition عند حصول إصدارين بنفس اللحظة (راجع migration.sql)
+  // فحص أولي بالعميل لتنبيه سريع فقط — المرجع الحقيقي والمضمون (transaction-safe) هو قيد قاعدة البيانات
+  // (material_stock_qty_nonneg) الذي يمنع أي رصيد سالب حتى مع عمليتي إصدار متزامنتين لنفس المادة
   for (const it of items) {
     const stock = await DB.stockOf(it.material_id, wh);
-    if (it.qty > stock.qty_on_hand) { toast('الكمية المطلوبة تتجاوز الرصيد المتاح لإحدى المواد (تحقق أولي — سيُعاد التحقق الملزم عند الحفظ)', 'e'); return; }
+    if (it.qty > stock.qty_on_hand) { toast('الكمية المطلوبة تتجاوز الرصيد المتاح لإحدى المواد', 'e'); return; }
   }
   try {
-    // لا تُجمع بيانات الجهة المستلمة بعد الآن (تمت إزالتها من نظام الإصدار)
-    await DB.createIssue({ doc_num: docnum, doc_date: date, warehouse_id: wh, notes: gv('i-notes'), created_by: ME.id }, items);
+    const idoc = await DB.createIssue({ doc_num: docnum, doc_date: date, warehouse_id: wh, recipient_type: '', recipient_name: '', recipient_person: '', notes: gv('i-notes'), created_by: ME.id }, items);
     toast('✅ تم حفظ وترحيل وثيقة الإصدار', 's');
-    go('docs');
-  } catch (e) {
-    // رسالة أوضح عند رفض قاعدة البيانات للعملية بسبب عدم كفاية الرصيد (رفض على مستوى المعاملة الملزمة)
-    if (/رصيد|insufficient|stock/i.test(e.message || '')) {
-      toast('تعذر الترحيل: الرصيد الفعلي غير كافٍ لحظة الحفظ (رُفضت العملية من قاعدة البيانات لمنع رصيد سالب)', 'e');
-    } else {
-      toast('خطأ: ' + e.message, 'e');
-    }
-  }
+    window.__docSeq = null;
+    viewDoc('issues', idoc.id, '');
+  } catch (e) { toast(friendlyStockError(e.message), 'e'); }
+};
+
+window.browseLastDoc = async (tab) => {
+  const seq = await ensureDocSeq(tab, '');
+  if (!seq.ids.length) { toast('لا توجد وثائق بعد لهذا النوع', 'i'); return; }
+  viewDoc(tab, seq.ids[seq.ids.length - 1].id, '');
 };
 
 // ── سجل الوثائق ──────────────────────────────
-const DOCS_PAGE_SIZE = 100;
-PAGE_RENDER.docs = async (root, tab = 'receipts', fyId = '', pageSize = DOCS_PAGE_SIZE) => {
-  const isArchiveMode = can('admin') && fyId;
+const DOCS_PAGE_SIZE = 50;
+PAGE_RENDER.docs = async (root, tab = 'receipts', fyId = '') => {
   const fys = can('admin') ? await DB.listFiscalYears() : [];
-  const [receipts, issues] = await Promise.all([DB.listReceipts(pageSize, fyId || null), DB.listIssues(pageSize, fyId || null)]);
-  window.__docsCache = { receipts, issues };
-  const activeList = tab === 'receipts' ? receipts : issues;
+  const [rCount, iCount] = await Promise.all([docsCount('receipts', fyId), docsCount('issues', fyId)]);
+  window.__docsMeta = { fys, counts: { receipts: rCount, issues: iCount } };
+  window.__docsState = { tab, fyId, offset: 0, items: [], hasMore: false };
+  window.__docsCache = { receipts: [], issues: [] };
+  await loadMoreDocs(root, true);
+};
+async function docsCount(tab, fyId) {
+  let q = sb.from(tab === 'receipts' ? 'receipt_docs' : 'issue_docs').select('id', { count: 'exact', head: true });
+  if (fyId) q = q.eq('fiscal_year_id', fyId);
+  const { count, error } = await q;
+  if (error) throw error;
+  return count || 0;
+}
+async function loadMoreDocs(root, reset = false) {
+  const st = window.__docsState;
+  const chunk = st.tab === 'receipts'
+    ? await DB.listReceipts(DOCS_PAGE_SIZE, st.fyId || null, st.offset)
+    : await DB.listIssues(DOCS_PAGE_SIZE, st.fyId || null, st.offset);
+  st.items = reset ? chunk : st.items.concat(chunk);
+  st.offset += chunk.length;
+  st.hasMore = chunk.length === DOCS_PAGE_SIZE;
+  window.__docsCache[st.tab] = st.items;
+  renderDocsPage(root);
+}
+window.loadMoreDocs = loadMoreDocs;
+
+function renderDocsPage(root) {
+  const st = window.__docsState, meta = window.__docsMeta, tab = st.tab, fyId = st.fyId;
+  const isArchiveMode = can('admin') && fyId;
   root.innerHTML = `
-    <div class="ph"><div><div class="ph-title">سجل الوثائق</div><div class="ph-sub">${isArchiveMode ? '📦 عرض أرشيف — للقراءة فقط' : 'جميع وثائق الاستلام والإصدار المرحّلة (السنة الحالية)'}</div></div>
+    <div class="ph"><div><div class="ph-title">سجل الوثائق</div><div class="ph-sub">${isArchiveMode ? '📦 عرض أرشيف — للقراءة فقط' : 'جميع وثائق الاستلام والإصدار المرحّلة (السنة الحالية)'} — ${st.items.length} محمّلة من ${meta.counts[tab]}</div></div>
       <div class="ph-actions">
         ${can('admin') ? `<select onchange="PAGE_RENDER.docs(document.getElementById('page-root'),'${tab}',this.value)" style="width:170px">
           <option value="">السنة الحالية</option>
-          ${fys.map(f => `<option value="${f.id}" ${f.id === fyId ? 'selected' : ''}>${f.year}${f.is_active ? ' (نشطة)' : ' (أرشيف)'}</option>`).join('')}
+          ${meta.fys.map(f => `<option value="${f.id}" ${f.id === fyId ? 'selected' : ''}>${f.year}${f.is_active ? ' (نشطة)' : ' (أرشيف)'}</option>`).join('')}
         </select>` : ''}
-        <button class="btn ${tab === 'receipts' ? 'btn-p' : 'btn-o'} btn-sm" onclick="PAGE_RENDER.docs(document.getElementById('page-root'),'receipts','${fyId}')">استلام (${receipts.total})</button>
-        <button class="btn ${tab === 'issues' ? 'btn-p' : 'btn-o'} btn-sm" onclick="PAGE_RENDER.docs(document.getElementById('page-root'),'issues','${fyId}')">إصدار (${issues.total})</button>
-        <button class="btn btn-o btn-sm" onclick="exportDocsExcel('${tab}')">⬇ تصدير إكسل</button>
+        <button class="btn ${tab === 'receipts' ? 'btn-p' : 'btn-o'} btn-sm" onclick="PAGE_RENDER.docs(document.getElementById('page-root'),'receipts','${fyId}')">استلام (${meta.counts.receipts})</button>
+        <button class="btn ${tab === 'issues' ? 'btn-p' : 'btn-o'} btn-sm" onclick="PAGE_RENDER.docs(document.getElementById('page-root'),'issues','${fyId}')">إصدار (${meta.counts.issues})</button>
+        <button class="btn btn-o btn-sm" onclick="exportDocsExcel('${tab}')">⬇ تصدير إكسل (المحمّل حالياً)</button>
       </div></div>
     <div class="card"><div class="itw"><table><thead><tr>
       <th>الوثيقة</th><th>التاريخ</th><th>المخزن</th><th>الإجمالي</th><th></th>
     </tr></thead><tbody>
-      ${activeList.map((d, idx) => `<tr>
+      ${st.items.map(d => `<tr>
         <td><span class="doc-num">${d.doc_num}</span></td><td>${d.doc_date}</td><td>${d.warehouses?.name || ''}</td><td class="gold-txt">${fmt(d.total)}</td>
         <td>
-          <button class="btn btn-o btn-sm" onclick="viewDoc('${tab}',${idx})">عرض/طباعة</button>
+          <button class="btn btn-o btn-sm" onclick="viewDoc('${tab}','${d.id}','${fyId}')">عرض/طباعة</button>
           ${tab === 'receipts' && d.attachment_path ? `<button class="btn btn-o btn-sm" onclick="viewAttachment('${d.attachment_path}')">📎 المرفق</button>` : ''}
         </td></tr>`).join('') || '<tr><td colspan="5" class="ec">لا توجد وثائق</td></tr>'}
     </tbody></table></div>
-    ${activeList.length < activeList.total ? `<div style="text-align:center;padding:12px"><button class="btn btn-o btn-sm" onclick="PAGE_RENDER.docs(document.getElementById('page-root'),'${tab}','${fyId}', ${pageSize + DOCS_PAGE_SIZE})">تحميل المزيد (${activeList.total - activeList.length} متبقٍ)</button></div>` : ''}
+    ${st.hasMore ? `<div class="form-foot" style="justify-content:center"><button class="btn btn-o" onclick="loadMoreDocs(document.getElementById('page-root'))">تحميل المزيد ⬇</button></div>` : ''}
     </div>`;
 };
 
 window.exportDocsExcel = (tab) => {
   const data = window.__docsCache?.[tab] || [];
-  const rows = data.map((d, i) => tab === 'receipts' ? {
-    'م': i + 1, 'رقم الوثيقة': d.doc_num, 'التاريخ': d.doc_date, 'المخزن': d.warehouses?.name || '',
-    'مرجع الشراء': d.purchase_ref || '', 'الإجمالي': d.total, 'ملاحظات': d.notes || '',
-  } : {
-    'م': i + 1, 'رقم الوثيقة': d.doc_num, 'التاريخ': d.doc_date, 'المخزن': d.warehouses?.name || '',
-    'الإجمالي': d.total, 'ملاحظات': d.notes || '',
-  });
+  const rows = data.map((d, i) => ({
+    'م': i + 1, 'رقم الوثيقة': d.doc_num, 'التاريخ': d.doc_date, 'المخزن': d.warehouses?.name || '', 'الإجمالي': d.total, 'ملاحظات': d.notes || '',
+  }));
   exportRowsToExcel(rows, tab === 'receipts' ? 'وثائق الاستلام' : 'وثائق الإصدار', `${tab === 'receipts' ? 'وثائق_الاستلام' : 'وثائق_الإصدار'}_${todayISO()}.xlsx`);
 };
 
-// عرض/طباعة وثيقة مع إمكانية التقليب للوثيقة التالية/السابقة بنفس التسلسل (من سجل الوثائق المحمّل حالياً)
-window.viewDoc = async (tab, index) => {
-  const list = window.__docsCache?.[tab] || [];
-  const doc = list[index];
-  if (!doc) { toast('تعذر العثور على الوثيقة', 'e'); return; }
+// ══════════════════════════════════════════════════════════════════
+//  عارض الوثيقة المفردة — تقليب تالي/سابق حسب التسلسل الزمني
+// ══════════════════════════════════════════════════════════════════
+window.__docSeq = null; // { tab, fyId, ids: [{id, doc_num, doc_date}] }
+async function ensureDocSeq(tab, fyId) {
+  if (window.__docSeq && window.__docSeq.tab === tab && window.__docSeq.fyId === fyId) return window.__docSeq;
+  const ids = await DB.docIdsOrdered(tab, fyId || null);
+  window.__docSeq = { tab, fyId, ids };
+  return window.__docSeq;
+}
+
+// tab: 'receipts' | 'issues'، id: معرّف الوثيقة، fyId: فلتر السنة (اختياري، للأدمن بالأرشيف)
+window.viewDoc = async (tab, id, fyId = '') => {
+  const root = document.getElementById('page-root');
+  root.innerHTML = '<div class="ec">جارِ التحميل...</div>';
+  const seq = await ensureDocSeq(tab, fyId);
+  await renderDocDetail(root, tab, id, fyId, seq);
+};
+window.viewDocDetail = window.viewDoc; // اسم بديل أوضح عند الاستدعاء من صفحات الاستلام/الإصدار
+
+async function renderDocDetail(root, tab, id, fyId, seq) {
   const isR = tab === 'receipts';
-  const items = isR ? await DB.receiptItems(doc.id) : await DB.issueItems(doc.id);
-  showDocViewer(tab, list, index, items);
+  const [doc, items] = await Promise.all([
+    isR ? DB.getReceiptById(id) : DB.getIssueById(id),
+    isR ? DB.receiptItems(id) : DB.issueItems(id),
+  ]);
+  window.__currentDocView = { doc, items, isR };
+
+  const idx = seq.ids.findIndex(x => x.id === id);
+  const prev = idx > 0 ? seq.ids[idx - 1] : null;
+  const next = idx >= 0 && idx < seq.ids.length - 1 ? seq.ids[idx + 1] : null;
+
+  const rowsHTML = items.map((it, i) => `<tr><td class="mono">${i+1}</td><td class="mono">${it.materials?.store_num||''}</td><td>${it.materials?.name||''}</td>
+    <td class="mono">${fmtQty(it.qty)} ${it.materials?.unit||''}</td><td class="mono">${fmt(it.unit_price)}</td><td class="mono gold-txt">${fmt(it.total)}</td></tr>`).join('');
+
+  root.innerHTML = `
+    <div class="ph"><div><div class="ph-title">${isR ? '📥 وثيقة استلام' : '📤 وثيقة إصدار'} <span class="doc-num">${doc.doc_num}</span></div>
+      <div class="ph-sub">${idx >= 0 ? `التسلسل ${idx + 1} من ${seq.ids.length}` : ''} — ${doc.doc_date} — ${doc.warehouses?.name || ''}</div></div>
+      <div class="ph-actions">
+        <button class="btn btn-o btn-sm" onclick="PAGE_RENDER.docs(document.getElementById('page-root'),'${tab}','${fyId}')">↩ سجل الوثائق</button>
+        <button class="btn btn-o btn-sm" ${!prev ? 'disabled style="opacity:.4;cursor:default"' : ''} onclick="${prev ? `viewDoc('${tab}','${prev.id}','${fyId}')` : ''}">⟵ السابق</button>
+        <button class="btn btn-o btn-sm" ${!next ? 'disabled style="opacity:.4;cursor:default"' : ''} onclick="${next ? `viewDoc('${tab}','${next.id}','${fyId}')` : ''}">التالي ⟶</button>
+        <button class="btn btn-p btn-sm" onclick="printCurrentDoc()">🖨 طباعة / PDF</button>
+        ${isR && doc.attachment_path ? `<button class="btn btn-o btn-sm" onclick="viewAttachment('${doc.attachment_path}')">📎 المرفق</button>` : ''}
+      </div></div>
+    <div class="card">
+      <div class="itw"><table><thead><tr><th>#</th><th>الرقم المخزني</th><th>اسم المادة</th><th>الكمية</th><th>${isR?'سعر الوصل':'السعر الوسطي'}</th><th>الإجمالي</th></tr></thead><tbody>
+        ${rowsHTML || '<tr><td colspan="6" class="ec">لا توجد أصناف بهذه الوثيقة</td></tr>'}
+      </tbody></table></div>
+      <div class="grand-bar"><span class="grand-lbl">الإجمالي الكلي</span><span class="grand-val">${fmt(doc.total)}</span></div>
+      ${doc.notes ? `<div style="margin-top:14px;font-size:12.5px;color:var(--ink2)">ملاحظات: ${doc.notes}</div>` : ''}
+    </div>`;
+}
+window.printCurrentDoc = () => {
+  const v = window.__currentDocView;
+  if (v) printDocument(v.doc, v.items, v.isR);
 };
 
 window.viewAttachment = async (path) => {
