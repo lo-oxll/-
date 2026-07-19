@@ -3,7 +3,9 @@
 // ══════════════════════════════════════════════════════════════════
 const gv = id => (document.getElementById(id)?.value ?? '').trim();
 const sv = (id, v) => { const el = document.getElementById(id); if (el) el.value = v; };
-const fmt = n => (Number(n) || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+// المبالغ بالدينار العراقي — بدون فاصلة عشرية (لا يوجد تعامل عملي بكسور الدينار)
+const fmt = n => Math.round(Number(n) || 0).toLocaleString('en-US');
+const fmtIQD = n => fmt(n) + ' د.ع';
 const fmtQty = n => (Number(n) || 0).toLocaleString('en-US', { maximumFractionDigits: 3 });
 const todayISO = () => new Date().toISOString().split('T')[0];
 
