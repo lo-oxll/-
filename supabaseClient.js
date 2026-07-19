@@ -30,9 +30,10 @@ const DB = {
     return data;
   },
   async updateWarehouse(id, w) {
+    const { data: before } = await sb.from('warehouses').select('*').eq('id', id).maybeSingle();
     const { data, error } = await sb.from('warehouses').update(w).eq('id', id).select().single();
     if (error) throw error;
-    await this.log('update_warehouse', 'warehouses', id, w);
+    await this.log('update_warehouse', 'warehouses', id, { old: before ? { code: before.code, name: before.name, location: before.location } : null, new: w });
     return data;
   },
   // حذف ناعم (soft delete): يمنع ظهور المخزن بالقوائم دون فقدان تاريخه بالوثائق والأرصدة
@@ -46,20 +47,20 @@ const DB = {
   },
 
   // ── دليل المواد ─────────────────────────────
-  // limit=null يجلب كل النتائج (يُستخدم بالتصدير/الاستيراد والبحث بمربعات الإكمال التلقائي)
-  // limit رقم يفعّل التصفح بالصفحات (Pagination) ويُرجع { rows, total }
+  // offset/limit تدعم "تحميل المزيد" (pagination) بدل جلب كل السجلات دفعة واحدة
   async listMaterials(term = '', limit = null, offset = 0) {
-    let q = sb.from('materials').select('*', { count: limit ? 'exact' : undefined }).eq('is_active', true).order('store_num');
+    let q = sb.from('materials').select('*').eq('is_active', true).order('store_num');
     if (term) q = q.or(`name.ilike.%${term}%,store_num.ilike.%${term}%`);
-    if (limit) q = q.range(offset, offset + limit - 1);
-    const { data, error, count } = await q;
-    if (error) throw error;
-    if (limit) return { rows: data, total: count ?? data.length };
-    return data;
+    if (limit != null) q = q.range(offset, offset + limit - 1);
+    const { data, error } = await q; if (error) throw error; return data;
   },
   async upsertMaterial(m) {
+    const { data: before } = await sb.from('materials').select('*').eq('store_num', m.store_num).maybeSingle();
     const { data, error } = await sb.from('materials').upsert(m, { onConflict: 'store_num' }).select().single();
-    if (error) throw error; return data;
+    if (error) throw error;
+    await this.log(before ? 'update_material' : 'create_material', 'materials', data.id,
+      before ? { old: { name: before.name, unit: before.unit, category: before.category, min_qty: before.min_qty }, new: m } : { new: m });
+    return data;
   },
 
   // ── الأرصدة والسعر الوسطي ─────────────────────────────
@@ -119,13 +120,14 @@ const DB = {
     return rdoc;
   },
   async listReceipts(limit = 50, fiscalYearId = null, offset = 0) {
-    let q = sb.from('receipt_docs').select('*, warehouses(code,name)', { count: 'exact' })
-      .order('doc_date', { ascending: false }).order('created_at', { ascending: false }).range(offset, offset + limit - 1);
+    let q = sb.from('receipt_docs').select('*, warehouses(code,name)').order('created_at', { ascending: false }).range(offset, offset + limit - 1);
     if (fiscalYearId) q = q.eq('fiscal_year_id', fiscalYearId);
-    const { data, error, count } = await q;
-    if (error) throw error;
-    data.total = count ?? data.length; // مرفق للاستخدام بالتصفح بالصفحات دون كسر الاستدعاءات الحالية التي تتعامل معه كمصفوفة
-    return data;
+    const { data, error } = await q;
+    if (error) throw error; return data;
+  },
+  async getReceiptById(id) {
+    const { data, error } = await sb.from('receipt_docs').select('*, warehouses(code,name)').eq('id', id).single();
+    if (error) throw error; return data;
   },
   async receiptItems(receiptId) {
     const { data, error } = await sb.from('receipt_items').select('*, materials(store_num,name,unit)')
@@ -156,24 +158,37 @@ const DB = {
     if (e1) throw e1;
     const rows = items.map(it => ({ ...it, issue_doc_id: idoc.id, unit_price: 0 })); // يُملأ تلقائياً بالتريغر
     const { error: e2 } = await sb.from('issue_items').insert(rows);
-    if (e2) throw e2;
+    if (e2) {
+      // تنظيف الوثيقة اليتيمة إذا فشل إدخال الأصناف (مثلاً بسبب قيد الرصيد غير السالب material_stock_qty_nonneg)
+      await sb.from('issue_docs').delete().eq('id', idoc.id);
+      throw e2;
+    }
     const { error: e3 } = await sb.rpc('fn_post_issue_journal', { p_issue_id: idoc.id });
-    if (e3) throw e3;
+    if (e3) { await sb.from('issue_docs').delete().eq('id', idoc.id); throw e3; }
     await this.log('create_issue', 'issue_docs', idoc.id, { doc_num: doc.doc_num, items: items.length });
     return idoc;
   },
   async listIssues(limit = 50, fiscalYearId = null, offset = 0) {
-    let q = sb.from('issue_docs').select('*, warehouses(code,name)', { count: 'exact' })
-      .order('doc_date', { ascending: false }).order('created_at', { ascending: false }).range(offset, offset + limit - 1);
+    let q = sb.from('issue_docs').select('*, warehouses(code,name)').order('created_at', { ascending: false }).range(offset, offset + limit - 1);
     if (fiscalYearId) q = q.eq('fiscal_year_id', fiscalYearId);
-    const { data, error, count } = await q;
-    if (error) throw error;
-    data.total = count ?? data.length;
-    return data;
+    const { data, error } = await q;
+    if (error) throw error; return data;
+  },
+  async getIssueById(id) {
+    const { data, error } = await sb.from('issue_docs').select('*, warehouses(code,name)').eq('id', id).single();
+    if (error) throw error; return data;
   },
   async issueItems(issueId) {
     const { data, error } = await sb.from('issue_items').select('*, materials(store_num,name,unit)')
       .eq('issue_doc_id', issueId);
+    if (error) throw error; return data;
+  },
+  // قائمة مرتّبة زمنياً (الأقدم أولاً) بمعرّفات الوثائق فقط — تُستخدم للتنقل التالي/السابق حسب التسلسل
+  async docIdsOrdered(tab, fiscalYearId = null) {
+    let q = sb.from(tab === 'receipts' ? 'receipt_docs' : 'issue_docs').select('id, doc_num, doc_date, created_at')
+      .order('doc_date', { ascending: true }).order('created_at', { ascending: true });
+    if (fiscalYearId) q = q.eq('fiscal_year_id', fiscalYearId);
+    const { data, error } = await q;
     if (error) throw error; return data;
   },
 
@@ -187,11 +202,9 @@ const DB = {
     if (error) throw error; return data;
   },
   async journalEntries(limit = 50, offset = 0) {
-    const { data, error, count } = await sb.from('journal_entries').select('*, journal_lines(*, chart_of_accounts(code,name))', { count: 'exact' })
+    const { data, error } = await sb.from('journal_entries').select('*, journal_lines(*, chart_of_accounts(code,name))')
       .order('created_at', { ascending: false }).range(offset, offset + limit - 1);
-    if (error) throw error;
-    data.total = count ?? data.length;
-    return data;
+    if (error) throw error; return data;
   },
   async postManualEntry(entry, lines) {
     const totalD = lines.reduce((s, l) => s + (l.debit || 0), 0);
@@ -261,26 +274,16 @@ const DB = {
   },
 
   // ── بيانات اللوحة البيانية (Dashboard Charts) ─────────────────────────────
-  // يقبل إما عدد الأشهر الأخيرة (months) أو مدى تاريخ مخصّص { startDate, endDate } (YYYY-MM-DD)
-  async monthlyMovementChart(months = 6, dateRange = null) {
-    let since, until;
-    if (dateRange && dateRange.startDate && dateRange.endDate) {
-      since = new Date(dateRange.startDate); since.setDate(1);
-      until = new Date(dateRange.endDate);
-    } else {
-      since = new Date(); since.setMonth(since.getMonth() - (months - 1)); since.setDate(1);
-      until = new Date();
-    }
+  async monthlyMovementChart(months = 6) {
+    const since = new Date(); since.setMonth(since.getMonth() - (months - 1)); since.setDate(1);
     const sinceISO = since.toISOString().split('T')[0];
-    const untilISO = until.toISOString().split('T')[0];
     const [{ data: r, error: e1 }, { data: i, error: e2 }] = await Promise.all([
-      sb.from('receipt_docs').select('doc_date,total').gte('doc_date', sinceISO).lte('doc_date', untilISO),
-      sb.from('issue_docs').select('doc_date,total').gte('doc_date', sinceISO).lte('doc_date', untilISO),
+      sb.from('receipt_docs').select('doc_date,total').gte('doc_date', sinceISO),
+      sb.from('issue_docs').select('doc_date,total').gte('doc_date', sinceISO),
     ]);
     if (e1) throw e1; if (e2) throw e2;
-    const monthCount = (until.getFullYear() - since.getFullYear()) * 12 + (until.getMonth() - since.getMonth()) + 1;
     const buckets = {};
-    for (let k = 0; k < monthCount; k++) {
+    for (let k = 0; k < months; k++) {
       const d = new Date(since); d.setMonth(d.getMonth() + k);
       buckets[`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`] = { receipts: 0, issues: 0 };
     }
@@ -288,8 +291,13 @@ const DB = {
     (i||[]).forEach(x => { const k = x.doc_date.slice(0,7); if (buckets[k]) buckets[k].issues += Number(x.total)||0; });
     return Object.entries(buckets).map(([month, v]) => ({ month, ...v }));
   },
-  async topConsumedMaterials(limit = 8) {
-    const { data, error } = await sb.from('issue_items').select('qty, materials(store_num,name)').limit(5000);
+  async topConsumedMaterials(limit = 8, months = 6) {
+    const since = new Date(); since.setMonth(since.getMonth() - (months - 1)); since.setDate(1);
+    const sinceISO = since.toISOString().split('T')[0];
+    const { data, error } = await sb.from('issue_items')
+      .select('qty, materials(name), issue_docs!inner(doc_date)')
+      .gte('issue_docs.doc_date', sinceISO)
+      .limit(5000);
     if (error) throw error;
     const agg = {};
     (data||[]).forEach(it => {
@@ -383,12 +391,10 @@ const DB = {
     const session = await this.currentSession();
     await sb.from('audit_log').insert({ user_id: session?.user?.id, action, entity, entity_id, details });
   },
-  async auditLog(limit = 100, offset = 0) {
-    const { data, error, count } = await sb.from('audit_log').select('*, profiles(full_name,role)', { count: 'exact' })
-      .order('created_at', { ascending: false }).range(offset, offset + limit - 1);
-    if (error) throw error;
-    data.total = count ?? data.length;
-    return data;
+  async auditLog(limit = 100) {
+    const { data, error } = await sb.from('audit_log').select('*, profiles(full_name,role)')
+      .order('created_at', { ascending: false }).limit(limit);
+    if (error) throw error; return data;
   },
 };
 
