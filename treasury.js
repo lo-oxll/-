@@ -18,7 +18,7 @@ PAGE_RENDER.cashbox = async (root) => {
       </div></div>
 
     <div class="stats">
-      <div class="stat"><div class="stat-lbl">الرصيد النقدي الحالي (دفتري)</div><div class="stat-val gold">${fmt(balance)}</div></div>
+      <div class="stat"><div class="stat-lbl">الرصيد النقدي الحالي (دفتري)</div><div class="stat-val gold">${fmtIQD(balance)}</div></div>
       <div class="stat"><div class="stat-lbl">عدد الحركات المسجّلة</div><div class="stat-val">${txns.length}</div></div>
     </div>
 
@@ -27,8 +27,8 @@ PAGE_RENDER.cashbox = async (root) => {
       <div style="font-size:12px;color:var(--ink3);margin-bottom:14px">أدخل المبلغ الفعلي الذي بلّغ عنه أمين الصندوق (بعد عدّه) لمقارنته بالرصيد الدفتري بالنظام لحظة المطابقة.</div>
       <div class="fg" style="margin-bottom:10px">
         <div class="fgroup"><label>تاريخ المطابقة *</label><input type="date" id="cr-date" value="${todayISO()}"></div>
-        <div class="fgroup"><label>الرصيد الدفتري (النظام)</label><input id="cr-system" value="${fmt(balance)}" readonly></div>
-        <div class="fgroup"><label>المبلغ المُبلَّغ من أمين الصندوق *</label><input type="number" step="0.01" id="cr-counted" oninput="updateCashReconDiff(${balance})"></div>
+        <div class="fgroup"><label>الرصيد الدفتري (النظام)</label><input id="cr-system" value="${fmtIQD(balance)}" readonly></div>
+        <div class="fgroup"><label>المبلغ المُبلَّغ من أمين الصندوق *</label><input type="number" step="1" id="cr-counted" oninput="updateCashReconDiff(${balance})"></div>
       </div>
       <div class="fgroup" style="margin-bottom:10px"><label>ملاحظات</label><textarea id="cr-notes"></textarea></div>
       <div id="cr-diff" style="font-size:13px;margin-bottom:10px;color:var(--ink3)"></div>
@@ -45,7 +45,7 @@ PAGE_RENDER.cashbox = async (root) => {
 
     <div class="card">
       <div class="card-title">سجل الحركات النقدية</div>
-      <div class="itw"><table><thead><tr><th>التاريخ</th><th>النوع</th><th>المبلغ</th><th>الطرف الآخر</th><th>الوصف</th></tr></thead><tbody>
+      <div class="itw"><table><thead><tr><th>التاريخ</th><th>النوع</th><th>المبلغ (د.ع)</th><th>الطرف الآخر</th><th>الوصف</th></tr></thead><tbody>
         ${txns.map(t => `<tr><td class="mono">${t.trans_date}</td>
           <td>${t.type === 'in' ? '<span class="chip-ok chip">قبض</span>' : '<span class="chip-danger chip">صرف</span>'}</td>
           <td class="mono ${t.type==='in'?'':''}" style="color:${t.type==='in'?'var(--ok)':'var(--danger)'}">${t.type==='in'?'+':'-'}${fmt(t.amount)}</td>
@@ -83,7 +83,7 @@ window.openCashTxnModal = async () => {
       <div class="fgroup"><label>النوع *</label><select id="ct-type"><option value="in">قبض (دخول نقدية)</option><option value="out">صرف (خروج نقدية)</option></select></div>
       <div class="fgroup"><label>التاريخ *</label><input type="date" id="ct-date" value="${todayISO()}"></div>
     </div>
-    <div class="fgroup" style="margin-bottom:10px"><label>المبلغ *</label><input type="number" step="0.01" id="ct-amount"></div>
+    <div class="fgroup" style="margin-bottom:10px"><label>المبلغ *</label><input type="number" step="1" id="ct-amount"></div>
     <div class="fgroup" style="margin-bottom:10px"><label>الحساب المقابل * (مثال: إيراد، ذمم، مصروف رواتب...)</label><select id="ct-acc"><option value="">اختر حساب...</option>${opts}</select></div>
     <div class="fgroup"><label>الوصف</label><input id="ct-desc"></div>
   `, async () => {
@@ -134,7 +134,7 @@ async function renderPayrollEmployees(root) {
         <button class="btn btn-o btn-sm" onclick="PAGE_RENDER.payroll(document.getElementById('page-root'),'list')">↩ رجوع</button>
         <button class="btn btn-p btn-sm" onclick="openEmployeeModal()">+ موظف جديد</button>
       </div></div>
-    <div class="card"><div class="itw"><table><thead><tr><th>الاسم</th><th>الوظيفة</th><th>الراتب الأساسي</th><th>الحالة</th><th></th></tr></thead><tbody>
+    <div class="card"><div class="itw"><table><thead><tr><th>الاسم</th><th>الوظيفة</th><th>الراتب الأساسي (د.ع)</th><th>الحالة</th><th></th></tr></thead><tbody>
       ${employees.map(e => `<tr><td>${e.full_name}</td><td>${e.job_title || '—'}</td><td class="mono">${fmt(e.base_salary)}</td>
         <td>${e.is_active ? '<span class="chip-ok chip">فعّال</span>' : '<span class="chip-danger chip">موقوف</span>'}</td>
         <td><button class="btn btn-o btn-sm" onclick='openEmployeeModal(${JSON.stringify(e).replace(/'/g,"&#39;")})'>تعديل</button></td></tr>`).join('') || '<tr><td colspan="5" class="ec">لا يوجد موظفون بعد</td></tr>'}
@@ -145,7 +145,7 @@ window.openEmployeeModal = (e = null) => {
     <div class="fgroup" style="margin-bottom:10px"><label>الاسم الكامل *</label><input id="m-emp-name" value="${e?.full_name || ''}"></div>
     <div class="fg2" style="margin-bottom:10px">
       <div class="fgroup"><label>الوظيفة</label><input id="m-emp-job" value="${e?.job_title || ''}"></div>
-      <div class="fgroup"><label>الراتب الأساسي *</label><input type="number" step="0.01" id="m-emp-salary" value="${e?.base_salary ?? 0}"></div>
+      <div class="fgroup"><label>الراتب الأساسي *</label><input type="number" step="1" id="m-emp-salary" value="${e?.base_salary ?? 0}"></div>
     </div>
     ${e ? `<div class="fgroup" style="flex-direction:row;align-items:center;gap:8px"><input type="checkbox" id="m-emp-active" style="width:auto" ${e.is_active?'checked':''}><label style="margin:0">فعّال</label></div>` : ''}
   `, async () => {
@@ -173,16 +173,16 @@ async function renderPayrollNew(root) {
         <div class="fgroup"><label>الفترة (شهر/سنة) *</label><input id="pr-period" value="${defaultPeriod}" placeholder="2026-07"></div>
         <div class="fgroup"><label>ملاحظات</label><input id="pr-notes"></div>
       </div>
-      <div class="itw"><table><thead><tr><th>الموظف</th><th>الوظيفة</th><th>الراتب الأساسي</th><th>البدلات</th><th>الاستقطاعات</th><th>الصافي</th></tr></thead>
+      <div class="itw"><table><thead><tr><th>الموظف</th><th>الوظيفة</th><th>الراتب الأساسي (د.ع)</th><th>البدلات (د.ع)</th><th>الاستقطاعات (د.ع)</th><th>الصافي (د.ع)</th></tr></thead>
         <tbody id="pr-items">
           ${employees.map(e => `<tr data-emp="${e.id}" data-base="${e.base_salary}">
             <td>${e.full_name}</td><td>${e.job_title || '—'}</td><td class="mono">${fmt(e.base_salary)}</td>
-            <td><input type="number" step="0.01" class="pr-allow" value="0" oninput="recalcPayrollRow(this)"></td>
-            <td><input type="number" step="0.01" class="pr-deduct" value="0" oninput="recalcPayrollRow(this)"></td>
+            <td><input type="number" step="1" class="pr-allow" value="0" oninput="recalcPayrollRow(this)"></td>
+            <td><input type="number" step="1" class="pr-deduct" value="0" oninput="recalcPayrollRow(this)"></td>
             <td class="mono pr-net">${fmt(e.base_salary)}</td>
           </tr>`).join('') || '<tr><td colspan="6" class="ec">لا يوجد موظفون فعّالون — أضفهم أولاً من "إدارة الموظفين"</td></tr>'}
         </tbody></table></div>
-      <div class="grand-bar"><span class="grand-lbl">إجمالي صافي الرواتب</span><span class="grand-val" id="pr-grand">${fmt(employees.reduce((s,e)=>s+Number(e.base_salary),0))}</span></div>
+      <div class="grand-bar"><span class="grand-lbl">إجمالي صافي الرواتب</span><span class="grand-val" id="pr-grand">${fmtIQD(employees.reduce((s,e)=>s+Number(e.base_salary),0))}</span></div>
       <div class="form-foot"><button class="btn btn-p" onclick="submitPayrollRun()">💾 حفظ كمسودة</button></div>
     </div>`;
 }
@@ -196,7 +196,7 @@ window.recalcPayrollRow = (input) => {
   let grand = 0;
   document.querySelectorAll('#pr-items tr').forEach(r => { grand += Number(r.querySelector('.pr-net')?.textContent.replace(/,/g,'')) || 0; });
   const grandEl = document.getElementById('pr-grand');
-  if (grandEl) grandEl.textContent = fmt(grand);
+  if (grandEl) grandEl.textContent = fmtIQD(grand);
 };
 window.submitPayrollRun = async () => {
   const period = gv('pr-period');
@@ -230,12 +230,12 @@ async function renderPayrollView(root, runId) {
         <button class="btn btn-o btn-sm" onclick="exportPayrollExcel('${runId}')">⬇ تصدير إكسل</button>
         ${run.status !== 'posted' ? `<button class="btn btn-p btn-sm" onclick="postPayrollConfirm('${runId}')">🔒 ترحيل الكشف وإنشاء القيد</button>` : ''}
       </div></div>
-    <div class="card"><div class="itw"><table><thead><tr><th>الموظف</th><th>الوظيفة</th><th>الأساسي</th><th>البدلات</th><th>الاستقطاعات</th><th>الصافي</th></tr></thead><tbody>
+    <div class="card"><div class="itw"><table><thead><tr><th>الموظف</th><th>الوظيفة</th><th>الأساسي (د.ع)</th><th>البدلات (د.ع)</th><th>الاستقطاعات (د.ع)</th><th>الصافي (د.ع)</th></tr></thead><tbody>
       ${items.map(it => `<tr><td>${it.employees?.full_name || ''}</td><td>${it.employees?.job_title || '—'}</td>
         <td class="mono">${fmt(it.base_salary)}</td><td class="mono">${fmt(it.allowances)}</td><td class="mono">${fmt(it.deductions)}</td>
         <td class="gold-txt">${fmt(it.net_pay ?? (Number(it.base_salary)+Number(it.allowances)-Number(it.deductions)))}</td></tr>`).join('')}
     </tbody></table></div>
-    <div class="grand-bar"><span class="grand-lbl">إجمالي صافي الرواتب</span><span class="grand-val">${fmt(totalNet)}</span></div>
+    <div class="grand-bar"><span class="grand-lbl">إجمالي صافي الرواتب</span><span class="grand-val">${fmtIQD(totalNet)}</span></div>
     </div>`;
 }
 window.exportPayrollExcel = async (runId) => {
