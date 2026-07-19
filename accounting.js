@@ -89,7 +89,7 @@ function renderJournalPage(root, st) {
     ${entries.map(e => `<div class="card">
       <div class="card-title">${e.entry_no} — ${e.entry_date} — <span class="chip">${JOURNAL_REF_LABEL[e.ref_type] || 'يدوي'}</span></div>
       <div style="font-size:12.5px;color:var(--ink2);margin-bottom:10px">${e.description || ''}</div>
-      <div class="itw"><table><thead><tr><th>الحساب</th><th>مدين</th><th>دائن</th></tr></thead><tbody>
+      <div class="itw"><table><thead><tr><th>الحساب</th><th>مدين (د.ع)</th><th>دائن (د.ع)</th></tr></thead><tbody>
         ${(e.journal_lines||[]).map(l => `<tr><td>${l.chart_of_accounts?.code} — ${l.chart_of_accounts?.name}</td><td class="mono">${l.debit ? fmt(l.debit) : '—'}</td><td class="mono">${l.credit ? fmt(l.credit) : '—'}</td></tr>`).join('')}
       </tbody></table></div></div>`).join('') || '<div class="card ec">لا توجد قيود بعد</div>'}
     ${st.hasMore ? `<div class="form-foot" style="justify-content:center"><button class="btn btn-o" onclick="loadMoreJournal(document.getElementById('page-root'))">تحميل المزيد ⬇</button></div>` : ''}
@@ -142,7 +142,7 @@ window.openJournalModal = async () => {
       toast('تم ترحيل القيد', 's'); go('journal'); return true;
     } catch (e) { toast(e.message, 'e'); return false; }
   });
-  function lineHTML() { return `<div class="tb-row"><select class="je-acc"><option value="">اختر حساب...</option>${opts}</select><input type="number" step="0.01" class="je-d" placeholder="مدين" oninput="updateJeBalance()"><input type="number" step="0.01" class="je-c" placeholder="دائن" oninput="updateJeBalance()"></div>`; }
+  function lineHTML() { return `<div class="tb-row"><select class="je-acc"><option value="">اختر حساب...</option>${opts}</select><input type="number" step="1" class="je-d" placeholder="مدين" oninput="updateJeBalance()"><input type="number" step="1" class="je-c" placeholder="دائن" oninput="updateJeBalance()"></div>`; }
   window.addJeLine = () => { document.getElementById('m-je-lines').insertAdjacentHTML('beforeend', lineHTML()); };
   window.updateJeBalance = () => {
     let d = 0, c = 0;
