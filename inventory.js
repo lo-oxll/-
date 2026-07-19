@@ -18,7 +18,7 @@ PAGE_RENDER.dashboard = async (root) => {
       <div class="stat ${low.length ? 'danger' : ''}"><div class="stat-lbl">مواد تحتاج إعادة طلب</div><div class="stat-val ${low.length ? 'danger' : ''}">${low.length}</div></div>
       <div class="stat"><div class="stat-lbl">استلامات اليوم</div><div class="stat-val">${todayR}</div></div>
       <div class="stat"><div class="stat-lbl">إصدارات اليوم</div><div class="stat-val">${todayI}</div></div>
-      <div class="stat"><div class="stat-lbl">قيمة المخزون الحالية</div><div class="stat-val gold">${fmt(invValue)}</div></div>
+      <div class="stat"><div class="stat-lbl">قيمة المخزون الحالية</div><div class="stat-val gold">${fmtIQD(invValue)}</div></div>
     </div>
 
     <div class="fg2">
@@ -43,13 +43,13 @@ PAGE_RENDER.dashboard = async (root) => {
     <div class="fg2">
       <div class="card">
         <div class="card-title">آخر وثائق الاستلام</div>
-        ${receipts.length ? `<div class="itw"><table><thead><tr><th>الوثيقة</th><th>التاريخ</th><th>المخزن</th><th>الإجمالي</th></tr></thead><tbody>
+        ${receipts.length ? `<div class="itw"><table><thead><tr><th>الوثيقة</th><th>التاريخ</th><th>المخزن</th><th>الإجمالي (د.ع)</th></tr></thead><tbody>
           ${receipts.map(r => `<tr><td><span class="doc-num">${r.doc_num}</span></td><td>${r.doc_date}</td><td>${r.warehouses?.name || ''}</td><td class="gold-txt">${fmt(r.total)}</td></tr>`).join('')}
         </tbody></table></div>` : `<div class="ec">لا توجد وثائق استلام بعد</div>`}
       </div>
       <div class="card">
         <div class="card-title">آخر وثائق الإصدار</div>
-        ${issues.length ? `<div class="itw"><table><thead><tr><th>الوثيقة</th><th>التاريخ</th><th>المخزن</th><th>الإجمالي</th></tr></thead><tbody>
+        ${issues.length ? `<div class="itw"><table><thead><tr><th>الوثيقة</th><th>التاريخ</th><th>المخزن</th><th>الإجمالي (د.ع)</th></tr></thead><tbody>
           ${issues.map(r => `<tr><td><span class="doc-num">${r.doc_num}</span></td><td>${r.doc_date}</td><td>${r.warehouses?.name || ''}</td><td class="gold-txt">${fmt(r.total)}</td></tr>`).join('')}
         </tbody></table></div>` : `<div class="ec">لا توجد وثائق إصدار بعد</div>`}
       </div>
@@ -259,8 +259,8 @@ function itemRowHTML(prefix, isReceive) {
     <td style="width:70px"><span class="mat-unit">—</span></td>
     <td style="width:110px"><input type="number" step="0.001" min="0.001" class="qty-in" placeholder="0"></td>
     <td style="width:120px">${isReceive
-      ? `<input type="number" step="0.0001" min="0" class="price-in" placeholder="0.00">`
-      : `<span class="price-out mono" style="color:var(--gold)">0.0000</span>`}</td>
+      ? `<input type="number" step="1" min="0" class="price-in" placeholder="0">`
+      : `<span class="price-out mono" data-price="0" style="color:var(--gold)">0</span>`}</td>
     <td style="width:120px" class="row-total mono">0.00</td>
     <td style="width:40px"><button class="btn btn-d btn-sm" onclick="this.closest('tr').remove(); recalcItems('${prefix}')">✕</button></td>
   </tr>`;
@@ -302,7 +302,9 @@ function addItemRow(prefix, isReceive) {
         const wh = whGetter();
         if (wh) {
           const stock = await DB.stockOf(m.id, wh);
-          row.querySelector('.price-out').textContent = Number(stock.avg_price).toFixed(4);
+          const priceOutEl = row.querySelector('.price-out');
+          priceOutEl.dataset.price = Number(stock.avg_price) || 0;
+          priceOutEl.textContent = fmt(stock.avg_price);
         }
       }
       recalcItems(prefix);
@@ -325,14 +327,14 @@ function recalcItems(prefix) {
   document.querySelectorAll(`#${prefix}-items tr`).forEach(tr => {
     const qty = Number(tr.querySelector('.qty-in')?.value) || 0;
     const priceIn = tr.querySelector('.price-in');
-    const price = priceIn ? (Number(priceIn.value) || 0) : (Number(tr.querySelector('.price-out')?.textContent) || 0);
+    const price = priceIn ? (Number(priceIn.value) || 0) : (Number(tr.querySelector('.price-out')?.dataset.price) || 0);
     const total = qty * price;
     tr.querySelector('.row-total').textContent = fmt(total);
     grand += total;
   });
   renumberRows(prefix);
   const grandEl = document.getElementById(prefix + '-grand');
-  if (grandEl) grandEl.textContent = fmt(grand);
+  if (grandEl) grandEl.textContent = fmtIQD(grand);
 }
 window.recalcItems = recalcItems;
 
@@ -386,10 +388,10 @@ PAGE_RENDER.receive = async (root) => {
     </div>
     <div class="card">
       <div class="card-title">المواد المستلَمة</div>
-      <div class="itw"><table><thead><tr><th>#</th><th>المادة</th><th>الوحدة</th><th>الكمية</th><th>سعر الوصل</th><th>الإجمالي</th><th></th></tr></thead>
+      <div class="itw"><table><thead><tr><th>#</th><th>المادة</th><th>الوحدة</th><th>الكمية</th><th>سعر الوصل (د.ع)</th><th>الإجمالي (د.ع)</th><th></th></tr></thead>
         <tbody id="r-items"></tbody></table></div>
       <button class="btn btn-o btn-sm" onclick="addItemRow('r', true)">+ إضافة مادة</button>
-      <div class="grand-bar"><span class="grand-lbl">الإجمالي الكلي</span><span class="grand-val" id="r-grand">0.00</span></div>
+      <div class="grand-bar"><span class="grand-lbl">الإجمالي الكلي</span><span class="grand-val" id="r-grand">0 د.ع</span></div>
       <div class="form-foot"><button class="btn btn-p" onclick="submitReceipt()">حفظ وترحيل الوثيقة</button></div>
     </div>`;
   addItemRow('r', true);
@@ -431,10 +433,10 @@ PAGE_RENDER.issue = async (root) => {
     </div>
     <div class="card">
       <div class="card-title">المواد المصروفة</div>
-      <div class="itw"><table><thead><tr><th>#</th><th>المادة</th><th>الوحدة</th><th>الكمية</th><th>السعر الوسطي</th><th>الإجمالي</th><th></th></tr></thead>
+      <div class="itw"><table><thead><tr><th>#</th><th>المادة</th><th>الوحدة</th><th>الكمية</th><th>السعر الوسطي (د.ع)</th><th>الإجمالي (د.ع)</th><th></th></tr></thead>
         <tbody id="i-items"></tbody></table></div>
       <button class="btn btn-o btn-sm" onclick="addItemRow('i', false)">+ إضافة مادة</button>
-      <div class="grand-bar"><span class="grand-lbl">الإجمالي الكلي</span><span class="grand-val" id="i-grand">0.00</span></div>
+      <div class="grand-bar"><span class="grand-lbl">الإجمالي الكلي</span><span class="grand-val" id="i-grand">0 د.ع</span></div>
       <div class="form-foot"><button class="btn btn-p" onclick="submitIssue()">حفظ وترحيل الوثيقة</button></div>
     </div>`;
   addItemRow('i', false);
@@ -448,7 +450,7 @@ window.refreshIssueRowPrices = async () => {
     if (!matId) continue;
     const stock = await DB.stockOf(matId, wh);
     const priceOut = tr.querySelector('.price-out');
-    if (priceOut) priceOut.textContent = Number(stock.avg_price).toFixed(4);
+    if (priceOut) { priceOut.dataset.price = Number(stock.avg_price) || 0; priceOut.textContent = fmt(stock.avg_price); }
   }
   recalcItems('i');
 };
@@ -524,7 +526,7 @@ function renderDocsPage(root) {
         <button class="btn btn-o btn-sm" onclick="exportDocsExcel('${tab}')">⬇ تصدير إكسل (المحمّل حالياً)</button>
       </div></div>
     <div class="card"><div class="itw"><table><thead><tr>
-      <th>الوثيقة</th><th>التاريخ</th><th>المخزن</th><th>الإجمالي</th><th></th>
+      <th>الوثيقة</th><th>التاريخ</th><th>المخزن</th><th>الإجمالي (د.ع)</th><th></th>
     </tr></thead><tbody>
       ${st.items.map(d => `<tr>
         <td><span class="doc-num">${d.doc_num}</span></td><td>${d.doc_date}</td><td>${d.warehouses?.name || ''}</td><td class="gold-txt">${fmt(d.total)}</td>
@@ -591,10 +593,10 @@ async function renderDocDetail(root, tab, id, fyId, seq) {
         ${isR && doc.attachment_path ? `<button class="btn btn-o btn-sm" onclick="viewAttachment('${doc.attachment_path}')">📎 المرفق</button>` : ''}
       </div></div>
     <div class="card">
-      <div class="itw"><table><thead><tr><th>#</th><th>الرقم المخزني</th><th>اسم المادة</th><th>الكمية</th><th>${isR?'سعر الوصل':'السعر الوسطي'}</th><th>الإجمالي</th></tr></thead><tbody>
+      <div class="itw"><table><thead><tr><th>#</th><th>الرقم المخزني</th><th>اسم المادة</th><th>الكمية</th><th>${isR?'سعر الوصل':'السعر الوسطي'} (د.ع)</th><th>الإجمالي (د.ع)</th></tr></thead><tbody>
         ${rowsHTML || '<tr><td colspan="6" class="ec">لا توجد أصناف بهذه الوثيقة</td></tr>'}
       </tbody></table></div>
-      <div class="grand-bar"><span class="grand-lbl">الإجمالي الكلي</span><span class="grand-val">${fmt(doc.total)}</span></div>
+      <div class="grand-bar"><span class="grand-lbl">الإجمالي الكلي</span><span class="grand-val">${fmtIQD(doc.total)}</span></div>
       ${doc.notes ? `<div style="margin-top:14px;font-size:12.5px;color:var(--ink2)">ملاحظات: ${doc.notes}</div>` : ''}
     </div>`;
 }
@@ -622,12 +624,12 @@ PAGE_RENDER.balance = async (root, whId = '') => {
         </select>
         <button class="btn btn-o btn-sm" onclick="exportBalanceExcel('${whId}')">⬇ تصدير إكسل</button>
       </div></div>
-    <div class="card"><div class="itw"><table><thead><tr><th>الرقم المخزني</th><th>المادة</th><th>المخزن</th><th>الرصيد</th><th>السعر الوسطي</th><th>القيمة</th></tr></thead><tbody>
+    <div class="card"><div class="itw"><table><thead><tr><th>الرقم المخزني</th><th>المادة</th><th>المخزن</th><th>الرصيد</th><th>السعر الوسطي (د.ع)</th><th>القيمة (د.ع)</th></tr></thead><tbody>
       ${stock.map(s => `<tr><td class="mono">${s.materials?.store_num || ''}</td><td>${s.materials?.name || ''}</td><td>${s.warehouses?.name || ''}</td>
         <td class="${s.qty_on_hand <= (s.materials?.min_qty||0) && s.materials?.min_qty>0 ? 'chip-danger' : ''}" style="${s.qty_on_hand <= (s.materials?.min_qty||0) && s.materials?.min_qty>0 ? 'padding:2px 8px;border-radius:6px' : ''}">${fmtQty(s.qty_on_hand)} ${s.materials?.unit||''}</td>
         <td class="mono">${fmt(s.avg_price)}</td><td class="gold-txt">${fmt(s.qty_on_hand * s.avg_price)}</td></tr>`).join('') || '<tr><td colspan="6" class="ec">لا توجد أرصدة بعد</td></tr>'}
     </tbody></table></div>
-    <div class="grand-bar"><span class="grand-lbl">إجمالي قيمة المخزون</span><span class="grand-val">${fmt(stock.reduce((s,x)=>s+x.qty_on_hand*x.avg_price,0))}</span></div>
+    <div class="grand-bar"><span class="grand-lbl">إجمالي قيمة المخزون</span><span class="grand-val">${fmtIQD(stock.reduce((s,x)=>s+x.qty_on_hand*x.avg_price,0))}</span></div>
     </div>`;
 };
 window.exportBalanceExcel = async (whId) => {
