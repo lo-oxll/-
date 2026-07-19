@@ -21,6 +21,7 @@ PAGE_RENDER.dashboard = async (root) => {
       <div class="stat"><div class="stat-lbl">قيمة المخزون الحالية</div><div class="stat-val gold">${fmt(invValue)}</div></div>
     </div>
 
+    <div id="dash-chart-controls"></div>
     <div class="fg2">
       <div class="card"><div class="card-title">📈 حركة المخزون الشهرية (قيمة الاستلام مقابل الإصدار)</div>
         <canvas id="chart-movement" height="230"></canvas></div>
@@ -37,8 +38,8 @@ PAGE_RENDER.dashboard = async (root) => {
       </div>
       <div class="card">
         <div class="card-title">آخر وثائق الإصدار</div>
-        ${issues.length ? `<div class="itw"><table><thead><tr><th>الوثيقة</th><th>التاريخ</th><th>الجهة</th><th>الإجمالي</th></tr></thead><tbody>
-          ${issues.map(r => `<tr><td><span class="doc-num">${r.doc_num}</span></td><td>${r.doc_date}</td><td>${r.recipient_name}</td><td class="gold-txt">${fmt(r.total)}</td></tr>`).join('')}
+        ${issues.length ? `<div class="itw"><table><thead><tr><th>الوثيقة</th><th>التاريخ</th><th>الإجمالي</th></tr></thead><tbody>
+          ${issues.map(r => `<tr><td><span class="doc-num">${r.doc_num}</span></td><td>${r.doc_date}</td><td class="gold-txt">${fmt(r.total)}</td></tr>`).join('')}
         </tbody></table></div>` : `<div class="ec">لا توجد وثائق إصدار بعد</div>`}
       </div>
     </div>
@@ -50,14 +51,49 @@ PAGE_RENDER.dashboard = async (root) => {
   renderDashboardCharts();
 };
 
-// ── رسم اللوحة البيانية (Chart.js) ──────────────────────────────
+// ── رسم اللوحة البيانية (Chart.js) + فلترة بالتاريخ ──────────────────────────────
 window.__dashCharts = window.__dashCharts || [];
+window.__dashRange = window.__dashRange || { months: 6, startDate: '', endDate: '' };
+
+function dashRangeControlsHTML() {
+  const r = window.__dashRange;
+  return `<div class="ph-actions" style="margin-bottom:10px;flex-wrap:wrap">
+    <select id="dash-range-preset" onchange="setDashRangePreset(this.value)">
+      <option value="3" ${r.months===3&&!r.startDate?'selected':''}>آخر 3 أشهر</option>
+      <option value="6" ${r.months===6&&!r.startDate?'selected':''}>آخر 6 أشهر</option>
+      <option value="12" ${r.months===12&&!r.startDate?'selected':''}>آخر 12 شهر</option>
+      <option value="custom" ${r.startDate?'selected':''}>مدى مخصّص...</option>
+    </select>
+    <input type="date" id="dash-start" value="${r.startDate}" class="${r.startDate ? '' : 'hidden'}" onchange="applyDashCustomRange()">
+    <input type="date" id="dash-end" value="${r.endDate}" class="${r.startDate ? '' : 'hidden'}" onchange="applyDashCustomRange()">
+  </div>`;
+}
+window.setDashRangePreset = (val) => {
+  if (val === 'custom') {
+    window.__dashRange = { months: 6, startDate: todayISO(), endDate: todayISO() };
+    go('dashboard');
+  } else {
+    window.__dashRange = { months: Number(val), startDate: '', endDate: '' };
+    renderDashboardCharts();
+  }
+};
+window.applyDashCustomRange = () => {
+  const s = gv('dash-start'), e = gv('dash-end');
+  if (!s || !e) return;
+  window.__dashRange = { months: 6, startDate: s, endDate: e };
+  renderDashboardCharts();
+};
+
 async function renderDashboardCharts() {
   window.__dashCharts.forEach(c => c.destroy());
   window.__dashCharts = [];
+  const controlsHost = document.getElementById('dash-chart-controls');
+  if (controlsHost) controlsHost.innerHTML = dashRangeControlsHTML();
   if (typeof Chart === 'undefined') return; // تحميل المكتبة قد يكون بطيئاً بالشبكات الضعيفة
 
-  const [movement, topMats] = await Promise.all([DB.monthlyMovementChart(6), DB.topConsumedMaterials(8)]);
+  const r = window.__dashRange;
+  const dateRange = r.startDate ? { startDate: r.startDate, endDate: r.endDate } : null;
+  const [movement, topMats] = await Promise.all([DB.monthlyMovementChart(r.months, dateRange), DB.topConsumedMaterials(8)]);
 
   const elM = document.getElementById('chart-movement');
   if (elM) {
@@ -130,11 +166,12 @@ window.deleteWarehouseConfirm = async (id, name) => {
   } catch (e) { toast('تعذر الحذف: ' + e.message, 'e'); }
 };
 
-// ── دليل المواد ──────────────────────────────
-PAGE_RENDER.materials = async (root, term = '') => {
-  const mats = await DB.listMaterials(term);
+// ── دليل المواد (مع تصفح بالصفحات "تحميل المزيد") ──────────────────────────────
+const MAT_PAGE_SIZE = 50;
+PAGE_RENDER.materials = async (root, term = '', pageSize = MAT_PAGE_SIZE) => {
+  const { rows: mats, total } = await DB.listMaterials(term, pageSize, 0);
   root.innerHTML = `
-    <div class="ph"><div><div class="ph-title">دليل المواد</div><div class="ph-sub">${mats.length} مادة</div></div>
+    <div class="ph"><div><div class="ph-title">دليل المواد</div><div class="ph-sub">عرض ${mats.length} من أصل ${total} مادة</div></div>
       <div class="ph-actions">
         <input id="mat-search" placeholder="بحث بالاسم أو الرقم المخزني..." style="width:220px" value="${term}">
         <button class="btn btn-o btn-sm" onclick="exportMaterialsExcel()">⬇ تصدير إكسل</button>
@@ -145,7 +182,9 @@ PAGE_RENDER.materials = async (root, term = '') => {
     <div class="card"><div class="itw"><table><thead><tr><th>الرقم المخزني</th><th>الاسم</th><th>الوحدة</th><th>التصنيف</th><th>حد إعادة الطلب</th><th></th></tr></thead><tbody>
       ${mats.map(m => `<tr><td class="mono">${m.store_num}</td><td>${m.name}</td><td>${m.unit}</td><td>${m.category || '—'}</td><td>${fmtQty(m.min_qty)}</td>
         <td><button class="btn btn-o btn-sm" onclick='openMatModal(${JSON.stringify(m).replace(/'/g,"&#39;")})'>تعديل</button></td></tr>`).join('') || '<tr><td colspan="6" class="ec">لا توجد نتائج</td></tr>'}
-    </tbody></table></div></div>`;
+    </tbody></table></div>
+    ${mats.length < total ? `<div style="text-align:center;padding:12px"><button class="btn btn-o btn-sm" onclick="PAGE_RENDER.materials(document.getElementById('page-root'), '${term.replace(/'/g,"&#39;")}', ${pageSize + MAT_PAGE_SIZE})">تحميل المزيد (${total - mats.length} متبقٍ)</button></div>` : ''}
+    </div>`;
   document.getElementById('mat-search').addEventListener('input', debounce(e => PAGE_RENDER.materials(root, e.target.value), 300));
 };
 function debounce(fn, ms) { let t; return (...a) => { clearTimeout(t); t = setTimeout(() => fn(...a), ms); }; }
@@ -212,8 +251,16 @@ window.openMatModal = (m = null) => {
   `, async () => {
     const store_num = gv('m-mat-sn'), name = gv('m-mat-name');
     if (!store_num || !name) { toast('الرقم المخزني والاسم مطلوبان', 'e'); return false; }
+    const payload = { store_num, name, unit: gv('m-mat-unit') || 'قطعة', category: gv('m-mat-cat'), min_qty: Number(gv('m-mat-min')) || 0, notes: gv('m-mat-notes') };
     try {
-      await DB.upsertMaterial({ store_num, name, unit: gv('m-mat-unit') || 'قطعة', category: gv('m-mat-cat'), min_qty: Number(gv('m-mat-min')) || 0, notes: gv('m-mat-notes') });
+      const saved = await DB.upsertMaterial(payload);
+      // تدقيق قبل/بعد: نسجّل القيم القديمة والجديدة عند تعديل مادة موجودة لتوثيق أدق بسجل المراجعة
+      if (m) {
+        await DB.log('update_material', 'materials', saved.id, {
+          old_value: { name: m.name, unit: m.unit, category: m.category, min_qty: m.min_qty, notes: m.notes },
+          new_value: { name: payload.name, unit: payload.unit, category: payload.category, min_qty: payload.min_qty, notes: payload.notes },
+        });
+      }
       toast('تم الحفظ', 's'); go('materials'); return true;
     } catch (e) { toast('خطأ: ' + e.message, 'e'); return false; }
   });
@@ -348,7 +395,6 @@ PAGE_RENDER.receive = async (root) => {
         <div class="fgroup"><label>رقم الوثيقة *</label><input id="r-docnum"></div>
         <div class="fgroup"><label>تاريخ الوثيقة *</label><input type="date" id="r-date" value="${todayISO()}"></div>
         <div class="fgroup"><label>المخزن *</label><select id="r-wh"><option value="">اختر...</option>${whs.map(w => `<option value="${w.id}">${w.code} — ${w.name}</option>`).join('')}</select></div>
-        <div class="fgroup"><label>المورّد</label><input id="r-supplier"></div>
         <div class="fgroup s2"><label>مرجع أمر الشراء (رقم/تاريخ)</label><input id="r-pref"></div>
       </div>
       <div class="fg2" style="margin-top:12px">
@@ -376,7 +422,8 @@ window.submitReceipt = async () => {
   if (items.some(i => i.unit_price <= 0)) { toast('يجب إدخال سعر الوصل لكل مادة مستلَمة', 'e'); return; }
   const attachFile = document.getElementById('r-attach')?.files?.[0] || null;
   try {
-    const rdoc = await DB.createReceipt({ doc_num: docnum, doc_date: date, warehouse_id: wh, supplier: gv('r-supplier'), purchase_ref: gv('r-pref'), notes: gv('r-notes'), created_by: ME.id }, items);
+    // لا تُجمع بيانات المورّد بعد الآن (تمت إزالتها من نظام الاستلام)
+    const rdoc = await DB.createReceipt({ doc_num: docnum, doc_date: date, warehouse_id: wh, purchase_ref: gv('r-pref'), notes: gv('r-notes'), created_by: ME.id }, items);
     if (attachFile) {
       try { await DB.uploadReceiptAttachment(rdoc.id, attachFile); }
       catch (e) { toast('تم حفظ الوثيقة لكن تعذر رفع المرفق: ' + e.message, 'e'); }
@@ -397,9 +444,6 @@ PAGE_RENDER.issue = async (root) => {
         <div class="fgroup"><label>رقم الوثيقة *</label><input id="i-docnum"></div>
         <div class="fgroup"><label>تاريخ الوثيقة *</label><input type="date" id="i-date" value="${todayISO()}"></div>
         <div class="fgroup"><label>المخزن *</label><select id="i-wh" onchange="refreshIssueRowPrices()"><option value="">اختر...</option>${whs.map(w => `<option value="${w.id}">${w.code} — ${w.name}</option>`).join('')}</select></div>
-        <div class="fgroup"><label>نوع الجهة المستلمة</label><select id="i-rtype"><option>قسم داخلي</option><option>جهة خارجية</option><option>موظف</option></select></div>
-        <div class="fgroup"><label>اسم الجهة/القسم *</label><input id="i-rname"></div>
-        <div class="fgroup"><label>اسم المستلم</label><input id="i-rperson"></div>
       </div>
       <div class="fgroup" style="margin-top:12px"><label>ملاحظات</label><textarea id="i-notes"></textarea></div>
     </div>
@@ -428,29 +472,41 @@ window.refreshIssueRowPrices = async () => {
 };
 
 window.submitIssue = async () => {
-  const docnum = gv('i-docnum'), date = gv('i-date'), wh = gv('i-wh'), rname = gv('i-rname');
-  if (!docnum || !date || !wh || !rname) { toast('أكمل بيانات الوثيقة (رقم/تاريخ/مخزن/الجهة المستلمة)', 'e'); return; }
+  const docnum = gv('i-docnum'), date = gv('i-date'), wh = gv('i-wh');
+  if (!docnum || !date || !wh) { toast('أكمل بيانات الوثيقة (رقم/تاريخ/مخزن)', 'e'); return; }
   const { rows: items, problems } = collectItemRows('i');
   if (problems.length) { alert('⚠️ لا يمكن الحفظ — تحقق من الصفوف التالية:\n\n' + problems.join('\n')); return; }
   if (!items.length) { toast('أضف مادة واحدة على الأقل مع الكمية', 'e'); return; }
-  // تحقق من كفاية الرصيد قبل الإرسال
+  // تحقق أولي من كفاية الرصيد على مستوى العميل (لتجربة استخدام أسرع فقط) —
+  // التحقق الفعلي والملزم صار داخل fn_post_issue_journal بقاعدة البيانات ضمن معاملة (transaction)
+  // مع قفل صف الرصيد (FOR UPDATE) لمنع race condition عند حصول إصدارين بنفس اللحظة (راجع migration.sql)
   for (const it of items) {
     const stock = await DB.stockOf(it.material_id, wh);
-    if (it.qty > stock.qty_on_hand) { toast('الكمية المطلوبة تتجاوز الرصيد المتاح لإحدى المواد', 'e'); return; }
+    if (it.qty > stock.qty_on_hand) { toast('الكمية المطلوبة تتجاوز الرصيد المتاح لإحدى المواد (تحقق أولي — سيُعاد التحقق الملزم عند الحفظ)', 'e'); return; }
   }
   try {
-    await DB.createIssue({ doc_num: docnum, doc_date: date, warehouse_id: wh, recipient_type: gv('i-rtype'), recipient_name: rname, recipient_person: gv('i-rperson'), notes: gv('i-notes'), created_by: ME.id }, items);
+    // لا تُجمع بيانات الجهة المستلمة بعد الآن (تمت إزالتها من نظام الإصدار)
+    await DB.createIssue({ doc_num: docnum, doc_date: date, warehouse_id: wh, notes: gv('i-notes'), created_by: ME.id }, items);
     toast('✅ تم حفظ وترحيل وثيقة الإصدار', 's');
     go('docs');
-  } catch (e) { toast('خطأ: ' + e.message, 'e'); }
+  } catch (e) {
+    // رسالة أوضح عند رفض قاعدة البيانات للعملية بسبب عدم كفاية الرصيد (رفض على مستوى المعاملة الملزمة)
+    if (/رصيد|insufficient|stock/i.test(e.message || '')) {
+      toast('تعذر الترحيل: الرصيد الفعلي غير كافٍ لحظة الحفظ (رُفضت العملية من قاعدة البيانات لمنع رصيد سالب)', 'e');
+    } else {
+      toast('خطأ: ' + e.message, 'e');
+    }
+  }
 };
 
 // ── سجل الوثائق ──────────────────────────────
-PAGE_RENDER.docs = async (root, tab = 'receipts', fyId = '') => {
+const DOCS_PAGE_SIZE = 100;
+PAGE_RENDER.docs = async (root, tab = 'receipts', fyId = '', pageSize = DOCS_PAGE_SIZE) => {
   const isArchiveMode = can('admin') && fyId;
   const fys = can('admin') ? await DB.listFiscalYears() : [];
-  const [receipts, issues] = await Promise.all([DB.listReceipts(100, fyId || null), DB.listIssues(100, fyId || null)]);
+  const [receipts, issues] = await Promise.all([DB.listReceipts(pageSize, fyId || null), DB.listIssues(pageSize, fyId || null)]);
   window.__docsCache = { receipts, issues };
+  const activeList = tab === 'receipts' ? receipts : issues;
   root.innerHTML = `
     <div class="ph"><div><div class="ph-title">سجل الوثائق</div><div class="ph-sub">${isArchiveMode ? '📦 عرض أرشيف — للقراءة فقط' : 'جميع وثائق الاستلام والإصدار المرحّلة (السنة الحالية)'}</div></div>
       <div class="ph-actions">
@@ -458,42 +514,44 @@ PAGE_RENDER.docs = async (root, tab = 'receipts', fyId = '') => {
           <option value="">السنة الحالية</option>
           ${fys.map(f => `<option value="${f.id}" ${f.id === fyId ? 'selected' : ''}>${f.year}${f.is_active ? ' (نشطة)' : ' (أرشيف)'}</option>`).join('')}
         </select>` : ''}
-        <button class="btn ${tab === 'receipts' ? 'btn-p' : 'btn-o'} btn-sm" onclick="PAGE_RENDER.docs(document.getElementById('page-root'),'receipts','${fyId}')">استلام (${receipts.length})</button>
-        <button class="btn ${tab === 'issues' ? 'btn-p' : 'btn-o'} btn-sm" onclick="PAGE_RENDER.docs(document.getElementById('page-root'),'issues','${fyId}')">إصدار (${issues.length})</button>
+        <button class="btn ${tab === 'receipts' ? 'btn-p' : 'btn-o'} btn-sm" onclick="PAGE_RENDER.docs(document.getElementById('page-root'),'receipts','${fyId}')">استلام (${receipts.total})</button>
+        <button class="btn ${tab === 'issues' ? 'btn-p' : 'btn-o'} btn-sm" onclick="PAGE_RENDER.docs(document.getElementById('page-root'),'issues','${fyId}')">إصدار (${issues.total})</button>
         <button class="btn btn-o btn-sm" onclick="exportDocsExcel('${tab}')">⬇ تصدير إكسل</button>
       </div></div>
     <div class="card"><div class="itw"><table><thead><tr>
-      ${tab === 'receipts' ? '<th>الوثيقة</th><th>التاريخ</th><th>المخزن</th><th>المورّد</th><th>الإجمالي</th><th></th>'
-                           : '<th>الوثيقة</th><th>التاريخ</th><th>المخزن</th><th>الجهة</th><th>الإجمالي</th><th></th>'}
+      <th>الوثيقة</th><th>التاريخ</th><th>المخزن</th><th>الإجمالي</th><th></th>
     </tr></thead><tbody>
-      ${(tab === 'receipts' ? receipts : issues).map(d => `<tr>
-        <td><span class="doc-num">${d.doc_num}</span></td><td>${d.doc_date}</td><td>${d.warehouses?.name || ''}</td>
-        <td>${tab === 'receipts' ? (d.supplier || '—') : d.recipient_name}</td><td class="gold-txt">${fmt(d.total)}</td>
+      ${activeList.map((d, idx) => `<tr>
+        <td><span class="doc-num">${d.doc_num}</span></td><td>${d.doc_date}</td><td>${d.warehouses?.name || ''}</td><td class="gold-txt">${fmt(d.total)}</td>
         <td>
-          <button class="btn btn-o btn-sm" onclick="viewDoc('${tab}','${d.id}')">عرض/طباعة</button>
+          <button class="btn btn-o btn-sm" onclick="viewDoc('${tab}',${idx})">عرض/طباعة</button>
           ${tab === 'receipts' && d.attachment_path ? `<button class="btn btn-o btn-sm" onclick="viewAttachment('${d.attachment_path}')">📎 المرفق</button>` : ''}
-        </td></tr>`).join('') || '<tr><td colspan="6" class="ec">لا توجد وثائق</td></tr>'}
-    </tbody></table></div></div>`;
+        </td></tr>`).join('') || '<tr><td colspan="5" class="ec">لا توجد وثائق</td></tr>'}
+    </tbody></table></div>
+    ${activeList.length < activeList.total ? `<div style="text-align:center;padding:12px"><button class="btn btn-o btn-sm" onclick="PAGE_RENDER.docs(document.getElementById('page-root'),'${tab}','${fyId}', ${pageSize + DOCS_PAGE_SIZE})">تحميل المزيد (${activeList.total - activeList.length} متبقٍ)</button></div>` : ''}
+    </div>`;
 };
 
 window.exportDocsExcel = (tab) => {
   const data = window.__docsCache?.[tab] || [];
   const rows = data.map((d, i) => tab === 'receipts' ? {
     'م': i + 1, 'رقم الوثيقة': d.doc_num, 'التاريخ': d.doc_date, 'المخزن': d.warehouses?.name || '',
-    'المورّد': d.supplier || '', 'مرجع الشراء': d.purchase_ref || '', 'الإجمالي': d.total, 'ملاحظات': d.notes || '',
+    'مرجع الشراء': d.purchase_ref || '', 'الإجمالي': d.total, 'ملاحظات': d.notes || '',
   } : {
     'م': i + 1, 'رقم الوثيقة': d.doc_num, 'التاريخ': d.doc_date, 'المخزن': d.warehouses?.name || '',
-    'الجهة المستلمة': d.recipient_name || '', 'المستلم': d.recipient_person || '', 'الإجمالي': d.total, 'ملاحظات': d.notes || '',
+    'الإجمالي': d.total, 'ملاحظات': d.notes || '',
   });
   exportRowsToExcel(rows, tab === 'receipts' ? 'وثائق الاستلام' : 'وثائق الإصدار', `${tab === 'receipts' ? 'وثائق_الاستلام' : 'وثائق_الإصدار'}_${todayISO()}.xlsx`);
 };
 
-window.viewDoc = async (tab, id) => {
+// عرض/طباعة وثيقة مع إمكانية التقليب للوثيقة التالية/السابقة بنفس التسلسل (من سجل الوثائق المحمّل حالياً)
+window.viewDoc = async (tab, index) => {
+  const list = window.__docsCache?.[tab] || [];
+  const doc = list[index];
+  if (!doc) { toast('تعذر العثور على الوثيقة', 'e'); return; }
   const isR = tab === 'receipts';
-  const docs = isR ? await DB.listReceipts(200) : await DB.listIssues(200);
-  const doc = docs.find(d => d.id === id);
-  const items = isR ? await DB.receiptItems(id) : await DB.issueItems(id);
-  printDocument(doc, items, isR);
+  const items = isR ? await DB.receiptItems(doc.id) : await DB.issueItems(doc.id);
+  showDocViewer(tab, list, index, items);
 };
 
 window.viewAttachment = async (path) => {
