@@ -154,7 +154,6 @@ async function printDocument(doc, items, isReceipt) {
     <table style="width:100%;font-size:12px;margin-bottom:14px"><tr>
       <td>رقم الوثيقة: <b class="mono">${doc.doc_num}</b></td><td>التاريخ: <b>${doc.doc_date}</b></td><td>المخزن: <b>${doc.warehouses?.name||''}</b></td>
     </tr></table>
-    ${isReceipt && doc.purchase_ref ? `<div style="font-size:12px;margin-bottom:10px">مرجع الشراء: <b>${doc.purchase_ref}</b></div>` : ''}
     <table style="width:100%;border-collapse:collapse;font-size:12px"><thead><tr style="border-bottom:1px solid #999">
       <th>#</th><th>الرقم المخزني</th><th>اسم المادة</th><th>الكمية</th><th>${isReceipt?'سعر الوصل':'السعر الوسطي'}</th><th>الإجمالي</th>
     </tr></thead><tbody>${rows}</tbody></table>
@@ -168,85 +167,26 @@ async function printDocument(doc, items, isReceipt) {
 }
 window.printDocument = printDocument;
 
-// ── قالب الطباعة القابل للتخصيص (شعار المؤسسة + رأس/تذييل) ──────────────────────────────
-// تُقرأ من app_settings حتى تخصّصها كل مؤسسة دون تعديل الكود:
-//   print_org_name  — اسم المؤسسة الظاهر برأس كل مستند مطبوع (افتراضياً APP_CONFIG.APP_NAME)
-//   print_logo_url  — رابط/صورة شعار المؤسسة (data URL أو رابط عام)
-//   print_header_note — سطر إضافي اختياري يظهر أسفل اسم المؤسسة بالرأس
-//   print_footer_note — سطر يظهر بتذييل كل مستند مطبوع
+// ── إعدادات قالب الطباعة (شعار + تذييل) — تُجلب مرة وتُخزَّن مؤقتاً بالجلسة ──────────────────────────────
+window.__printSettings = window.__printSettings || null;
 async function getPrintSettings() {
+  if (window.__printSettings) return window.__printSettings;
   try {
-    const [orgName, logoUrl, headerNote, footerNote] = await Promise.all([
-      DB.getSetting('print_org_name'), DB.getSetting('print_logo_url'),
-      DB.getSetting('print_header_note'), DB.getSetting('print_footer_note'),
-    ]);
-    return {
-      orgName: orgName || window.APP_CONFIG.APP_NAME,
-      logoUrl: logoUrl || '', headerNote: headerNote || '', footerNote: footerNote || '',
-    };
-  } catch (e) { return { orgName: window.APP_CONFIG.APP_NAME, logoUrl: '', headerNote: '', footerNote: '' }; }
+    const [logo, footer] = await Promise.all([DB.getSetting('print_logo_url'), DB.getSetting('print_footer_text')]);
+    window.__printSettings = { logo, footer };
+  } catch (e) { window.__printSettings = { logo: null, footer: null }; }
+  return window.__printSettings;
 }
-window.getPrintSettings = getPrintSettings;
 
 async function renderPrintArea(title, bodyHTML) {
   // #print-area is display:none on screen and shown only inside @media print (see styles.css)
+  const { logo, footer } = await getPrintSettings();
   let area = document.getElementById('print-area');
   if (!area) { area = document.createElement('div'); area.id = 'print-area'; document.body.appendChild(area); }
-  const s = await getPrintSettings();
-  area.innerHTML = `<div class="print-header">
-      ${s.logoUrl ? `<img src="${s.logoUrl}" style="height:46px;max-width:120px;object-fit:contain">` : `<div class="print-seal">🏛</div>`}
-      <div style="text-align:center"><div style="font-weight:800;font-size:15px">${s.orgName}</div><div style="font-size:12px">${title}</div>
-        ${s.headerNote ? `<div style="font-size:11px;color:#555">${s.headerNote}</div>` : ''}</div>
+  const sealHTML = logo ? `<img src="${logo}" alt="شعار" style="width:56px;height:56px;object-fit:contain">` : `<div class="print-seal">🏛</div>`;
+  area.innerHTML = `<div class="print-header">${sealHTML}
+      <div style="text-align:center"><div style="font-weight:800;font-size:15px">${window.APP_CONFIG.APP_NAME}</div><div style="font-size:12px">${title}</div></div>
       <div style="font-size:11px">تاريخ الطباعة: ${new Date().toLocaleString('ar-IQ')}</div></div>
     ${bodyHTML}
-    ${s.footerNote ? `<div style="margin-top:24px;font-size:11px;text-align:center;color:#555;border-top:1px solid #ccc;padding-top:8px">${s.footerNote}</div>` : ''}`;
+    ${footer ? `<div style="margin-top:30px;padding-top:10px;border-top:1px solid #ccc;font-size:11px;text-align:center;color:#555">${footer}</div>` : ''}`;
 }
-
-// ── عارض وثيقة مع تقليب تالي/سابق حسب تسلسل سجل الوثائق ──────────────────────────────
-// يُستخدم من صفحة "سجل الوثائق" (docs) لعرض وثيقة استلام/إصدار مع إمكانية الانتقال
-// للوثيقة التالية أو السابقة بنفس القائمة المحمّلة حالياً دون الرجوع للقائمة في كل مرة
-window.showDocViewer = async (tab, list, index, items) => {
-  const isR = tab === 'receipts';
-  let bg = document.getElementById('doc-viewer-bg');
-  if (!bg) { bg = document.createElement('div'); bg.id = 'doc-viewer-bg'; bg.className = 'modal-bg'; document.body.appendChild(bg); }
-
-  async function render(idx, itemsForIdx) {
-    const doc = list[idx];
-    const docItems = itemsForIdx || (isR ? await DB.receiptItems(doc.id) : await DB.issueItems(doc.id));
-    const rows = docItems.map((it, i) => `<tr><td>${i+1}</td><td class="mono">${it.materials.store_num}</td><td>${it.materials.name}</td>
-      <td>${fmtQty(it.qty)} ${it.materials.unit}</td><td class="mono">${fmt(it.unit_price)}</td><td class="mono">${fmt(it.total)}</td></tr>`).join('');
-    bg.innerHTML = `<div class="modal" style="max-width:720px">
-      <div class="card-title" style="display:flex;justify-content:space-between;align-items:center">
-        <span>${isR ? '📥 وثيقة استلام' : '📤 وثيقة إصدار'} — <span class="mono">${doc.doc_num}</span></span>
-        <span style="font-size:12px;color:var(--ink3)">${idx + 1} / ${list.length}</span>
-      </div>
-      <table style="width:100%;font-size:12.5px;margin-bottom:12px"><tr>
-        <td>التاريخ: <b>${doc.doc_date}</b></td><td>المخزن: <b>${doc.warehouses?.name || ''}</b></td><td>الإجمالي: <b class="gold-txt">${fmt(doc.total)}</b></td>
-      </tr></table>
-      ${isR && doc.purchase_ref ? `<div style="font-size:12px;margin-bottom:8px">مرجع الشراء: <b>${doc.purchase_ref}</b></div>` : ''}
-      <div class="itw" style="max-height:320px;overflow:auto"><table><thead><tr>
-        <th>#</th><th>الرقم المخزني</th><th>المادة</th><th>الكمية</th><th>${isR?'سعر الوصل':'السعر الوسطي'}</th><th>الإجمالي</th>
-      </tr></thead><tbody>${rows}</tbody></table></div>
-      ${doc.notes ? `<div style="margin-top:10px;font-size:12px">ملاحظات: ${doc.notes}</div>` : ''}
-      ${isR && doc.attachment_path ? `<div style="margin-top:8px"><button class="btn btn-o btn-sm" data-attach>📎 عرض المرفق</button></div>` : ''}
-      <div class="form-foot" style="justify-content:space-between">
-        <div>
-          <button class="btn btn-o btn-sm" data-prev ${idx === 0 ? 'disabled' : ''}>◀ السابق</button>
-          <button class="btn btn-o btn-sm" data-next ${idx === list.length - 1 ? 'disabled' : ''}>التالي ▶</button>
-        </div>
-        <div>
-          <button class="btn btn-o btn-sm" data-print>🖨 طباعة</button>
-          <button class="btn btn-p btn-sm" data-close>إغلاق</button>
-        </div>
-      </div>
-    </div>`;
-    bg.querySelector('[data-close]').onclick = () => bg.remove();
-    bg.querySelector('[data-prev]').onclick = () => idx > 0 && render(idx - 1);
-    bg.querySelector('[data-next]').onclick = () => idx < list.length - 1 && render(idx + 1);
-    bg.querySelector('[data-print]').onclick = () => printDocument(doc, docItems, isR);
-    const attachBtn = bg.querySelector('[data-attach]');
-    if (attachBtn) attachBtn.onclick = () => viewAttachment(doc.attachment_path);
-  }
-  bg.addEventListener('mousedown', e => { if (e.target === bg) bg.remove(); });
-  await render(index, items);
-};
