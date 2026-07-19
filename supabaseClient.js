@@ -23,6 +23,27 @@ const DB = {
     const { data, error } = await sb.from('warehouses').select('*').eq('is_active', true).order('code');
     if (error) throw error; return data;
   },
+  async createWarehouse(w) {
+    const { data, error } = await sb.from('warehouses').insert(w).select().single();
+    if (error) throw error;
+    await this.log('create_warehouse', 'warehouses', data.id, { code: w.code, name: w.name });
+    return data;
+  },
+  async updateWarehouse(id, w) {
+    const { data, error } = await sb.from('warehouses').update(w).eq('id', id).select().single();
+    if (error) throw error;
+    await this.log('update_warehouse', 'warehouses', id, w);
+    return data;
+  },
+  // حذف ناعم (soft delete): يمنع ظهور المخزن بالقوائم دون فقدان تاريخه بالوثائق والأرصدة
+  async deleteWarehouse(id) {
+    const { count, error: e0 } = await sb.from('material_stock').select('id', { count: 'exact', head: true }).eq('warehouse_id', id).gt('qty_on_hand', 0);
+    if (e0) throw e0;
+    if (count > 0) throw new Error('لا يمكن حذف مخزن يحتوي رصيد مواد أكبر من صفر — صفّر الرصيد أو رحّله لمخزن آخر أولاً');
+    const { error } = await sb.from('warehouses').update({ is_active: false }).eq('id', id);
+    if (error) throw error;
+    await this.log('delete_warehouse', 'warehouses', id, {});
+  },
 
   // ── دليل المواد ─────────────────────────────
   async listMaterials(term = '') {
@@ -51,6 +72,34 @@ const DB = {
     const { data, error } = await q; if (error) throw error; return data;
   },
 
+  // ── استيراد أرصدة التدوير (الافتتاحية) حسب المخزن ─────────────────────────────
+  // rows: [{ store_num, qty, unit_price }] — يُحدَّث رصيد material_stock فوراً + يُسجَّل بجدول opening_balances لهذه السنة
+  async importOpeningBalancesForWarehouse(fiscalYearId, warehouseId, rows) {
+    const session = await this.currentSession();
+    let ok = 0, fail = 0; const errors = [];
+    let seq = 1;
+    for (const r of rows) {
+      try {
+        const { data: mat, error: e1 } = await sb.from('materials').select('id').eq('store_num', r.store_num).maybeSingle();
+        if (e1) throw e1;
+        if (!mat) { throw new Error('الرقم المخزني غير موجود بدليل المواد'); }
+
+        const { error: e2 } = await sb.from('material_stock')
+          .upsert({ material_id: mat.id, warehouse_id: warehouseId, qty_on_hand: r.qty, avg_price: r.unit_price }, { onConflict: 'material_id,warehouse_id' });
+        if (e2) throw e2;
+
+        const { error: e3 } = await sb.from('opening_balances').insert({
+          fiscal_year_id: fiscalYearId, seq: seq++, material_id: mat.id, warehouse_id: warehouseId,
+          qty: r.qty, unit_price: r.unit_price, balance_date: todayISO(), created_by: session?.user?.id,
+        });
+        if (e3) throw e3;
+        ok++;
+      } catch (e) { fail++; errors.push(`${r.store_num}: ${e.message}`); }
+    }
+    await this.log('import_opening_balances', 'opening_balances', null, { warehouse_id: warehouseId, fiscal_year_id: fiscalYearId, ok, fail });
+    return { ok, fail, errors };
+  },
+
   // ── وثائق الاستلام ─────────────────────────────
   async createReceipt(doc, items) {
     const { data: rdoc, error: e1 } = await sb.from('receipt_docs').insert(doc).select().single();
@@ -73,6 +122,23 @@ const DB = {
     const { data, error } = await sb.from('receipt_items').select('*, materials(store_num,name,unit)')
       .eq('receipt_doc_id', receiptId);
     if (error) throw error; return data;
+  },
+
+  // ── مرفقات وثائق الاستلام (Supabase Storage) ─────────────────────────────
+  async uploadReceiptAttachment(receiptId, file) {
+    const path = `receipts/${receiptId}/${Date.now()}_${file.name.replace(/[^\w.\-]+/g, '_')}`;
+    const { error: e1 } = await sb.storage.from(window.APP_CONFIG.ATTACHMENTS_BUCKET).upload(path, file, { upsert: false });
+    if (e1) throw e1;
+    const { error: e2 } = await sb.from('receipt_docs').update({ attachment_path: path, attachment_name: file.name }).eq('id', receiptId);
+    if (e2) throw e2;
+    await this.log('upload_attachment', 'receipt_docs', receiptId, { file: file.name });
+    return path;
+  },
+  async getAttachmentUrl(path) {
+    // رابط موقّع صالح لمدة ساعة (البكت خاص)
+    const { data, error } = await sb.storage.from(window.APP_CONFIG.ATTACHMENTS_BUCKET).createSignedUrl(path, 3600);
+    if (error) throw error;
+    return data.signedUrl;
   },
 
   // ── وثائق الإصدار ─────────────────────────────
@@ -144,6 +210,148 @@ const DB = {
   async openingBalances(fiscalYearId) {
     const { data, error } = await sb.from('v_opening_balances').select('*').eq('fiscal_year_id', fiscalYearId).order('seq');
     if (error) throw error; return data;
+  },
+
+  // ── الجرد الدوري (Physical Count) ─────────────────────────────
+  async listPhysicalCounts() {
+    const { data, error } = await sb.from('physical_counts').select('*, warehouses(code,name)').order('created_at', { ascending: false });
+    if (error) throw error; return data;
+  },
+  async createPhysicalCount(count, items) {
+    const { data: pc, error: e1 } = await sb.from('physical_counts').insert(count).select().single();
+    if (e1) throw e1;
+    const rows = items.map(it => ({ ...it, count_id: pc.id }));
+    const { error: e2 } = await sb.from('count_items').insert(rows);
+    if (e2) throw e2;
+    await this.log('create_physical_count', 'physical_counts', pc.id, { count_no: count.count_no, items: items.length });
+    return pc;
+  },
+  async countItems(countId) {
+    const { data, error } = await sb.from('count_items').select('*, materials(store_num,name,unit)').eq('count_id', countId).order('id');
+    if (error) throw error; return data;
+  },
+  async postPhysicalCount(countId) {
+    const { error } = await sb.rpc('fn_post_physical_count_journal', { p_count_id: countId });
+    if (error) throw error;
+    await this.log('post_physical_count', 'physical_counts', countId, {});
+  },
+
+  // ── إعدادات النظام (مفتاح/قيمة) — تُستخدم لضبط حسابات فروقات الجرد ─────────────────────────────
+  async getSetting(key) {
+    const { data, error } = await sb.from('app_settings').select('value').eq('key', key).maybeSingle();
+    if (error) throw error; return data?.value || null;
+  },
+  async setSetting(key, value) {
+    const { error } = await sb.from('app_settings').upsert({ key, value });
+    if (error) throw error;
+  },
+
+  // ── بيانات اللوحة البيانية (Dashboard Charts) ─────────────────────────────
+  async monthlyMovementChart(months = 6) {
+    const since = new Date(); since.setMonth(since.getMonth() - (months - 1)); since.setDate(1);
+    const sinceISO = since.toISOString().split('T')[0];
+    const [{ data: r, error: e1 }, { data: i, error: e2 }] = await Promise.all([
+      sb.from('receipt_docs').select('doc_date,total').gte('doc_date', sinceISO),
+      sb.from('issue_docs').select('doc_date,total').gte('doc_date', sinceISO),
+    ]);
+    if (e1) throw e1; if (e2) throw e2;
+    const buckets = {};
+    for (let k = 0; k < months; k++) {
+      const d = new Date(since); d.setMonth(d.getMonth() + k);
+      buckets[`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`] = { receipts: 0, issues: 0 };
+    }
+    (r||[]).forEach(x => { const k = x.doc_date.slice(0,7); if (buckets[k]) buckets[k].receipts += Number(x.total)||0; });
+    (i||[]).forEach(x => { const k = x.doc_date.slice(0,7); if (buckets[k]) buckets[k].issues += Number(x.total)||0; });
+    return Object.entries(buckets).map(([month, v]) => ({ month, ...v }));
+  },
+  async topConsumedMaterials(limit = 8) {
+    const { data, error } = await sb.from('issue_items').select('qty, materials(store_num,name)').limit(5000);
+    if (error) throw error;
+    const agg = {};
+    (data||[]).forEach(it => {
+      const key = it.materials?.name || '—';
+      agg[key] = (agg[key] || 0) + (Number(it.qty)||0);
+    });
+    return Object.entries(agg).sort((a,b)=>b[1]-a[1]).slice(0, limit).map(([name, qty]) => ({ name, qty }));
+  },
+  async inventoryValueTrend() {
+    const stock = await this.fullBalance();
+    const total = stock.reduce((s,x)=>s+ (Number(x.qty_on_hand)||0) * (Number(x.avg_price)||0), 0);
+    return total;
+  },
+
+  // ── صندوق المركز (Cash Box) ─────────────────────────────
+  async listCashTransactions(limit = 200) {
+    const { data, error } = await sb.from('cash_transactions').select('*, chart_of_accounts(code,name)').order('trans_date', { ascending: false }).order('created_at', { ascending: false }).limit(limit);
+    if (error) throw error; return data;
+  },
+  async cashBalance() {
+    const { data, error } = await sb.from('cash_transactions').select('type, amount');
+    if (error) throw error;
+    return (data || []).reduce((s, t) => s + (t.type === 'in' ? Number(t.amount) : -Number(t.amount)), 0);
+  },
+  // ينشئ حركة صندوق + قيد يدوي مرتبط بها (الطرف الآخر = counterparty_account_id)
+  async createCashTransaction(t) {
+    const cashAccId = await this.getSetting('cashbox_account_id');
+    if (!cashAccId) throw new Error('يجب ضبط "حساب الصندوق/النقدية" أولاً من صفحة المستخدمون والصلاحيات');
+    const session = await this.currentSession();
+    const lines = t.type === 'in'
+      ? [{ account_id: cashAccId, debit: t.amount, credit: 0 }, { account_id: t.counterparty_account_id, debit: 0, credit: t.amount }]
+      : [{ account_id: t.counterparty_account_id, debit: t.amount, credit: 0 }, { account_id: cashAccId, debit: 0, credit: t.amount }];
+    const je = await this.postManualEntry({
+      entry_no: 'JE-CASH-' + Date.now().toString().slice(-8), entry_date: t.trans_date, ref_type: 'cash',
+      description: t.description || (t.type === 'in' ? 'قبض نقدي' : 'صرف نقدي'), created_by: session?.user?.id,
+    }, lines);
+    const { data, error } = await sb.from('cash_transactions').insert({
+      trans_date: t.trans_date, type: t.type, amount: t.amount, description: t.description,
+      counterparty_account_id: t.counterparty_account_id, journal_entry_id: je.id, created_by: session?.user?.id,
+    }).select().single();
+    if (error) throw error;
+    return data;
+  },
+  async listCashReconciliations(limit = 50) {
+    const { data, error } = await sb.from('cash_reconciliations').select('*, profiles(full_name)').order('recon_date', { ascending: false }).limit(limit);
+    if (error) throw error; return data;
+  },
+  async createCashReconciliation(r) {
+    const session = await this.currentSession();
+    const { data, error } = await sb.from('cash_reconciliations').insert({ ...r, created_by: session?.user?.id }).select().single();
+    if (error) throw error;
+    await this.log('cash_reconciliation', 'cash_reconciliations', data.id, { diff: r.counted_amount - r.system_balance });
+    return data;
+  },
+
+  // ── الرواتب (Payroll) ─────────────────────────────
+  async listEmployees(activeOnly = true) {
+    let q = sb.from('employees').select('*').order('full_name');
+    if (activeOnly) q = q.eq('is_active', true);
+    const { data, error } = await q; if (error) throw error; return data;
+  },
+  async upsertEmployee(e) {
+    const { data, error } = await sb.from('employees').upsert(e).select().single();
+    if (error) throw error; return data;
+  },
+  async listPayrollRuns() {
+    const { data, error } = await sb.from('payroll_runs').select('*').order('period', { ascending: false });
+    if (error) throw error; return data;
+  },
+  async createPayrollRun(run, items) {
+    const { data: pr, error: e1 } = await sb.from('payroll_runs').insert(run).select().single();
+    if (e1) throw e1;
+    const rows = items.map(it => ({ ...it, run_id: pr.id }));
+    const { error: e2 } = await sb.from('payroll_items').insert(rows);
+    if (e2) throw e2;
+    await this.log('create_payroll_run', 'payroll_runs', pr.id, { period: run.period, items: items.length });
+    return pr;
+  },
+  async payrollItems(runId) {
+    const { data, error } = await sb.from('payroll_items').select('*, employees(full_name,job_title)').eq('run_id', runId);
+    if (error) throw error; return data;
+  },
+  async postPayrollRun(runId) {
+    const { error } = await sb.rpc('fn_post_payroll_journal', { p_run_id: runId });
+    if (error) throw error;
+    await this.log('post_payroll_run', 'payroll_runs', runId, {});
   },
 
   // ── سجل المراجعة ─────────────────────────────

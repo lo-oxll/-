@@ -19,8 +19,20 @@ function toast(msg, kind = 'i') {
 }
 window.toast = toast;
 
+// ── تصدير إكسل عام (تُستخدم بكل صفحات التقارير وسجل الوثائق) ──────────────────────────────
+function exportRowsToExcel(rows, sheetName, filename) {
+  if (!rows || !rows.length) { toast('لا توجد بيانات لتصديرها', 'e'); return; }
+  const ws = XLSX.utils.json_to_sheet(rows);
+  const colWidths = Object.keys(rows[0]).map(k => ({ wch: Math.max(10, Math.min(34, k.length + 4)) }));
+  ws['!cols'] = colWidths;
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, sheetName.slice(0, 31));
+  XLSX.writeFile(wb, filename);
+}
+window.exportRowsToExcel = exportRowsToExcel;
+
 // ── صلاحيات حسب الدور ──────────────────────────────
-const ROLE_LABEL = { admin: 'مدير النظام', accountant: 'محاسب', manager: 'مدير', auditor: 'مدقق' };
+const ROLE_LABEL = { admin: 'مدير النظام', accountant: 'محاسب سيطرة مخزنية', central_accountant: 'محاسب المركز', manager: 'مدير', auditor: 'مدقق' };
 function can(...roles) { return ME && roles.includes(ME.role); }
 window.can = can;
 
@@ -34,6 +46,7 @@ const PAGES = [
     { id: 'issue', label: 'إصدار مخزني', icon: '📤', roles: ['admin','accountant'] },
     { id: 'docs', label: 'سجل الوثائق', icon: '📑' },
     { id: 'balance', label: 'الأرصدة والجرد', icon: '⚖️' },
+    { id: 'physcount', label: 'الجرد الدوري', icon: '🧮', roles: ['admin','accountant','manager'] },
     { id: 'lowstock', label: 'تنبيهات إعادة الطلب', icon: '🔔' },
     { id: 'materials', label: 'دليل المواد', icon: '📚', roles: ['admin','accountant'] },
     { id: 'warehouses', label: 'المخازن', icon: '🏬', roles: ['admin'] },
@@ -43,10 +56,14 @@ const PAGES = [
     { id: 'journal', label: 'القيود المحاسبية', icon: '🧾' },
     { id: 'reports', label: 'التقارير المالية', icon: '📈' },
   ]},
+  { section: 'الخزينة والرواتب', items: [
+    { id: 'cashbox', label: 'صندوق المركز', icon: '💰', roles: ['admin','central_accountant'] },
+    { id: 'payroll', label: 'الرواتب', icon: '🧑‍💼', roles: ['admin','central_accountant'] },
+  ]},
   { section: 'الإدارة', items: [
     { id: 'fiscal', label: 'السنوات المالية', icon: '📅' },
     { id: 'users', label: 'المستخدمون والصلاحيات', icon: '👤', roles: ['admin'] },
-    { id: 'auditlog', label: 'سجل المراجعة', icon: '🔐' },
+    { id: 'auditlog', label: 'سجل المراجعة', icon: '🔐', roles: ['admin','manager','central_accountant'] },
   ]},
 ];
 

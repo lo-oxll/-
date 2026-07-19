@@ -2,20 +2,55 @@
 //  التقارير المالية: ميزان المراجعة، الميزانية العمومية، قائمة الدخل
 // ══════════════════════════════════════════════════════════════════
 PAGE_RENDER.reports = async (root, tab = 'tb') => {
-  const tb = await DB.trialBalance();
+  const [tb, accs] = await Promise.all([DB.trialBalance(), DB.chartOfAccounts()]);
+  const cogsCodes = new Set(accs.filter(a => a.is_cogs).map(a => a.code));
+  const tbWithCogs = tb.map(a => ({ ...a, is_cogs: cogsCodes.has(a.code) }));
   root.innerHTML = `
     <div class="ph"><div><div class="ph-title">التقارير المالية</div><div class="ph-sub">مُستخلَصة مباشرة من القيود المحاسبية المرحّلة</div></div>
       <div class="ph-actions">
         <button class="btn ${tab==='tb'?'btn-p':'btn-o'} btn-sm" onclick="PAGE_RENDER.reports(document.getElementById('page-root'),'tb')">ميزان المراجعة</button>
         <button class="btn ${tab==='bs'?'btn-p':'btn-o'} btn-sm" onclick="PAGE_RENDER.reports(document.getElementById('page-root'),'bs')">الميزانية العمومية</button>
+        <button class="btn ${tab==='tp'?'btn-p':'btn-o'} btn-sm" onclick="PAGE_RENDER.reports(document.getElementById('page-root'),'tp')">المتاجرة والأرباح والخسائر</button>
         <button class="btn ${tab==='pl'?'btn-p':'btn-o'} btn-sm" onclick="PAGE_RENDER.reports(document.getElementById('page-root'),'pl')">قائمة الدخل</button>
+        <button class="btn btn-o btn-sm" onclick="exportReportExcel('${tab}')">⬇ تصدير إكسل</button>
         <button class="btn btn-o btn-sm" onclick="printReport('${tab}')">🖨 طباعة / PDF</button>
       </div></div>
-    <div class="card" id="report-body">${renderReportBody(tab, tb)}</div>
+    <div class="card" id="report-body">${renderReportBody(tab, tbWithCogs)}</div>
   `;
 };
 
+// ── قسم المتاجرة (تكلفة المبيعات) + الأرباح والخسائر ──────────────────────────────
+function tradingPlTotals(tb) {
+  const revRows = tb.filter(a => a.type === 'revenue').map(a => ({ ...a, net_debit: a.total_credit - a.total_debit }));
+  const cogsRows = tb.filter(a => a.type === 'expense' && a.is_cogs).map(a => ({ ...a, net_debit: a.total_debit - a.total_credit }));
+  const opexRows = tb.filter(a => a.type === 'expense' && !a.is_cogs).map(a => ({ ...a, net_debit: a.total_debit - a.total_credit }));
+  const revTotal = revRows.reduce((s, a) => s + Number(a.net_debit), 0);
+  const cogsTotal = cogsRows.reduce((s, a) => s + Number(a.net_debit), 0);
+  const opexTotal = opexRows.reduce((s, a) => s + Number(a.net_debit), 0);
+  const grossProfit = revTotal - cogsTotal;
+  const netProfit = grossProfit - opexTotal;
+  return { revRows, cogsRows, opexRows, revTotal, cogsTotal, opexTotal, grossProfit, netProfit };
+}
+
 function renderReportBody(tab, tb) {
+  if (tab === 'tp') {
+    const t = tradingPlTotals(tb);
+    return `<div class="card-title">حساب المتاجرة</div>
+      <h3 style="font-size:13px;margin-bottom:10px">الإيرادات (المبيعات)</h3>${acctList(t.revRows)}
+      <div class="grand-bar"><span class="grand-lbl">إجمالي الإيرادات</span><span class="grand-val">${fmt(t.revTotal)}</span></div>
+      <h3 style="font-size:13px;margin:16px 0 10px">تكلفة المبيعات</h3>${acctList(t.cogsRows)}
+      <div class="grand-bar"><span class="grand-lbl">إجمالي تكلفة المبيعات</span><span class="grand-val">${fmt(t.cogsTotal)}</span></div>
+      <div class="grand-bar" style="margin-top:16px;background:transparent;border:2px solid var(--border)">
+        <span class="grand-lbl">مجمل الربح (نتيجة المتاجرة)</span><span class="grand-val" style="color:${t.grossProfit>=0?'var(--ok)':'var(--danger)'}">${fmt(t.grossProfit)}</span></div>
+
+      <div class="card-title" style="margin-top:26px">حساب الأرباح والخسائر</div>
+      <div style="display:flex;justify-content:space-between;font-size:12.5px;padding:6px 0"><span>مجمل الربح المرحّل من حساب المتاجرة</span><span class="mono">${fmt(t.grossProfit)}</span></div>
+      <h3 style="font-size:13px;margin:16px 0 10px">المصروفات الإدارية والتشغيلية</h3>${acctList(t.opexRows)}
+      <div class="grand-bar"><span class="grand-lbl">إجمالي المصروفات</span><span class="grand-val">${fmt(t.opexTotal)}</span></div>
+      <div class="grand-bar" style="margin-top:16px;background:transparent;border:2px solid var(--border)">
+        <span class="grand-lbl">صافي الربح (الخسارة)</span><span class="grand-val" style="color:${t.netProfit>=0?'var(--ok)':'var(--danger)'}">${fmt(t.netProfit)}</span></div>
+      ${!t.cogsRows.length ? `<div style="margin-top:14px;font-size:11.5px;color:var(--ink3)">ملاحظة: لا توجد حسابات مصروفات مصنّفة "ضمن تكلفة المبيعات" بعد — يمكن تصنيفها من صفحة دليل الحسابات، وإلى حينها تُحسب كل المصروفات كمصروفات تشغيلية فقط.</div>` : ''}`;
+  }
   if (tab === 'tb') {
     const sumD = tb.reduce((s,a)=>s+Number(a.total_debit),0), sumC = tb.reduce((s,a)=>s+Number(a.total_credit),0);
     return `<div class="card-title">ميزان المراجعة</div><div class="itw"><table><thead><tr><th>الرمز</th><th>الحساب</th><th>مدين</th><th>دائن</th></tr></thead><tbody>
@@ -60,13 +95,57 @@ function incomeStatementTotals(tb) {
   return { revenue: { rows: revRows, total: revTotal }, expense: { rows: expRows, total: expTotal }, net: revTotal - expTotal };
 }
 
+// ── تصدير التقرير الحالي إلى إكسل ──────────────────────────────
+window.exportReportExcel = async (tab) => {
+  const [tbRaw, accs] = await Promise.all([DB.trialBalance(), DB.chartOfAccounts()]);
+  const cogsCodes = new Set(accs.filter(a => a.is_cogs).map(a => a.code));
+  const tb = tbRaw.map(a => ({ ...a, is_cogs: cogsCodes.has(a.code) }));
+  let rows = [], sheetName = '', fname = '';
+  if (tab === 'tp') {
+    const t = tradingPlTotals(tb);
+    rows = [
+      ...t.revRows.map(a => ({ 'القسم': 'المتاجرة — الإيرادات', 'الرمز': a.code, 'الحساب': a.name, 'المبلغ': Math.abs(Number(a.net_debit)) })),
+      ...t.cogsRows.map(a => ({ 'القسم': 'المتاجرة — تكلفة المبيعات', 'الرمز': a.code, 'الحساب': a.name, 'المبلغ': Math.abs(Number(a.net_debit)) })),
+      { 'القسم': 'المتاجرة', 'الرمز': '', 'الحساب': 'مجمل الربح', 'المبلغ': t.grossProfit },
+      ...t.opexRows.map(a => ({ 'القسم': 'أرباح وخسائر — مصروفات', 'الرمز': a.code, 'الحساب': a.name, 'المبلغ': Math.abs(Number(a.net_debit)) })),
+      { 'القسم': 'الصافي', 'الرمز': '', 'الحساب': 'صافي الربح (الخسارة)', 'المبلغ': t.netProfit },
+    ];
+    sheetName = 'المتاجرة والأرباح والخسائر'; fname = `المتاجرة_والأرباح_والخسائر_${todayISO()}.xlsx`;
+    exportRowsToExcel(rows, sheetName, fname);
+    return;
+  }
+  if (tab === 'tb') {
+    rows = tb.map((a,i) => ({ 'م': i+1, 'الرمز': a.code, 'الحساب': a.name, 'مدين': Number(a.total_debit)||0, 'دائن': Number(a.total_credit)||0 }));
+    sheetName = 'ميزان المراجعة'; fname = `ميزان_المراجعة_${todayISO()}.xlsx`;
+  } else if (tab === 'bs') {
+    const netIncome = incomeStatementTotals(tb).net;
+    const section = (arr, label) => arr.map((a,i) => ({ 'القسم': label, 'الرمز': a.code, 'الحساب': a.name, 'الرصيد': Math.abs(Number(a.net_debit ?? (a.total_credit-a.total_debit))) }));
+    rows = [
+      ...section(tb.filter(a=>a.type==='asset'), 'الأصول'),
+      ...section(tb.filter(a=>a.type==='liability'), 'الخصوم'),
+      ...section(tb.filter(a=>a.type==='equity'), 'حقوق الملكية'),
+      { 'القسم': 'حقوق الملكية', 'الرمز': '', 'الحساب': 'صافي دخل الفترة', 'الرصيد': netIncome },
+    ];
+    sheetName = 'الميزانية العمومية'; fname = `الميزانية_العمومية_${todayISO()}.xlsx`;
+  } else {
+    const { revenue, expense, net } = incomeStatementTotals(tb, true);
+    rows = [
+      ...revenue.rows.map(a => ({ 'القسم': 'الإيرادات', 'الرمز': a.code, 'الحساب': a.name, 'المبلغ': Math.abs(Number(a.net_debit)) })),
+      ...expense.rows.map(a => ({ 'القسم': 'المصروفات', 'الرمز': a.code, 'الحساب': a.name, 'المبلغ': Math.abs(Number(a.net_debit)) })),
+      { 'القسم': 'الصافي', 'الرمز': '', 'الحساب': 'صافي الربح (الخسارة)', 'المبلغ': net },
+    ];
+    sheetName = 'قائمة الدخل'; fname = `قائمة_الدخل_${todayISO()}.xlsx`;
+  }
+  exportRowsToExcel(rows, sheetName, fname);
+};
+
 // ── الطباعة الرسمية (تصدير PDF عبر مربع حوار طباعة المتصفح) ──────────────────────────────
 window.printReport = (tab) => {
   const body = document.getElementById('report-body').innerHTML;
   renderPrintArea(reportTitle(tab), body);
   window.print();
 };
-function reportTitle(tab) { return tab === 'tb' ? 'ميزان المراجعة' : tab === 'bs' ? 'الميزانية العمومية' : 'قائمة الدخل'; }
+function reportTitle(tab) { return tab === 'tb' ? 'ميزان المراجعة' : tab === 'bs' ? 'الميزانية العمومية' : tab === 'tp' ? 'المتاجرة والأرباح والخسائر' : 'قائمة الدخل'; }
 
 function printDocument(doc, items, isReceipt) {
   const rows = items.map((it, i) => `<tr><td>${i+1}</td><td class="mono">${it.materials.store_num}</td><td>${it.materials.name}</td>
