@@ -31,6 +31,16 @@ function exportRowsToExcel(rows, sheetName, filename) {
 }
 window.exportRowsToExcel = exportRowsToExcel;
 
+// ── ترجمة أخطاء قيود قاعدة البيانات الشائعة لرسائل عربية مفهومة ──────────────────────────────
+function friendlyStockError(msg) {
+  if (!msg) return 'حدث خطأ غير متوقع';
+  if (msg.includes('material_stock_qty_nonneg') || msg.toLowerCase().includes('check constraint') && msg.includes('qty_on_hand')) {
+    return 'تعذّر تنفيذ العملية: الكمية المطلوبة تتجاوز الرصيد الفعلي المتاح بهذا المخزن (رُفضت من قاعدة البيانات لمنع رصيد سالب — قد تكون هذه المادة صُرفت للتو بعملية أخرى متزامنة، حدّث الصفحة وحاول مجدداً)';
+  }
+  return msg;
+}
+window.friendlyStockError = friendlyStockError;
+
 // ── صلاحيات حسب الدور ──────────────────────────────
 const ROLE_LABEL = { admin: 'مدير النظام', accountant: 'محاسب سيطرة مخزنية', central_accountant: 'محاسب المركز', manager: 'مدير', auditor: 'مدقق' };
 function can(...roles) { return ME && roles.includes(ME.role); }
