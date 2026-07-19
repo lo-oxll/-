@@ -140,8 +140,17 @@ const DB = {
     const path = `receipts/${receiptId}/${Date.now()}_${file.name.replace(/[^\w.\-]+/g, '_')}`;
     const { error: e1 } = await sb.storage.from(window.APP_CONFIG.ATTACHMENTS_BUCKET).upload(path, file, { upsert: false });
     if (e1) throw e1;
-    const { error: e2 } = await sb.from('receipt_docs').update({ attachment_path: path, attachment_name: file.name }).eq('id', receiptId);
-    if (e2) throw e2;
+    // .select().single() إجباري هنا: بدونها، لو منعت صلاحيات RLS التحديث (لعدم وجود سياسة UPDATE
+    // على receipt_docs) فإن Supabase يرجّع "نجاح" بصمت مع صفر صفوف محدَّثة، والمرفق يختفي بدون أي
+    // رسالة خطأ. بإضافة select().single() نجبر الاستعلام على إرجاع خطأ صريح إن لم يتحدّث أي صف فعلاً.
+    const { data, error: e2 } = await sb.from('receipt_docs')
+      .update({ attachment_path: path, attachment_name: file.name })
+      .eq('id', receiptId)
+      .select()
+      .single();
+    if (e2 || !data) {
+      throw new Error('تعذّر ربط المرفق بالوثيقة (صلاحيات الوصول). تأكد من تنفيذ migration_v4.sql، أو تواصل مع مدير النظام. تفاصيل: ' + (e2?.message || 'لم يتحدّث أي صف'));
+    }
     await this.log('upload_attachment', 'receipt_docs', receiptId, { file: file.name });
     return path;
   },
