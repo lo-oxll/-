@@ -1,4 +1,3 @@
-
 // ══════════════════════════════════════════════════════════════════
 //  التقارير المالية: ميزان المراجعة، الميزانية العمومية، قائمة الدخل
 // ══════════════════════════════════════════════════════════════════
@@ -38,26 +37,26 @@ function renderReportBody(tab, tb) {
     const t = tradingPlTotals(tb);
     return `<div class="card-title">حساب المتاجرة</div>
       <h3 style="font-size:13px;margin-bottom:10px">الإيرادات (المبيعات)</h3>${acctList(t.revRows)}
-      <div class="grand-bar"><span class="grand-lbl">إجمالي الإيرادات</span><span class="grand-val">${fmt(t.revTotal)}</span></div>
+      <div class="grand-bar"><span class="grand-lbl">إجمالي الإيرادات</span><span class="grand-val">${fmtIQD(t.revTotal)}</span></div>
       <h3 style="font-size:13px;margin:16px 0 10px">تكلفة المبيعات</h3>${acctList(t.cogsRows)}
-      <div class="grand-bar"><span class="grand-lbl">إجمالي تكلفة المبيعات</span><span class="grand-val">${fmt(t.cogsTotal)}</span></div>
+      <div class="grand-bar"><span class="grand-lbl">إجمالي تكلفة المبيعات</span><span class="grand-val">${fmtIQD(t.cogsTotal)}</span></div>
       <div class="grand-bar" style="margin-top:16px;background:transparent;border:2px solid var(--border)">
-        <span class="grand-lbl">مجمل الربح (نتيجة المتاجرة)</span><span class="grand-val" style="color:${t.grossProfit>=0?'var(--ok)':'var(--danger)'}">${fmt(t.grossProfit)}</span></div>
+        <span class="grand-lbl">مجمل الربح (نتيجة المتاجرة)</span><span class="grand-val" style="color:${t.grossProfit>=0?'var(--ok)':'var(--danger)'}">${fmtIQD(t.grossProfit)}</span></div>
 
       <div class="card-title" style="margin-top:26px">حساب الأرباح والخسائر</div>
-      <div style="display:flex;justify-content:space-between;font-size:12.5px;padding:6px 0"><span>مجمل الربح المرحّل من حساب المتاجرة</span><span class="mono">${fmt(t.grossProfit)}</span></div>
+      <div style="display:flex;justify-content:space-between;font-size:12.5px;padding:6px 0"><span>مجمل الربح المرحّل من حساب المتاجرة</span><span class="mono">${fmtIQD(t.grossProfit)}</span></div>
       <h3 style="font-size:13px;margin:16px 0 10px">المصروفات الإدارية والتشغيلية</h3>${acctList(t.opexRows)}
-      <div class="grand-bar"><span class="grand-lbl">إجمالي المصروفات</span><span class="grand-val">${fmt(t.opexTotal)}</span></div>
+      <div class="grand-bar"><span class="grand-lbl">إجمالي المصروفات</span><span class="grand-val">${fmtIQD(t.opexTotal)}</span></div>
       <div class="grand-bar" style="margin-top:16px;background:transparent;border:2px solid var(--border)">
-        <span class="grand-lbl">صافي الربح (الخسارة)</span><span class="grand-val" style="color:${t.netProfit>=0?'var(--ok)':'var(--danger)'}">${fmt(t.netProfit)}</span></div>
+        <span class="grand-lbl">صافي الربح (الخسارة)</span><span class="grand-val" style="color:${t.netProfit>=0?'var(--ok)':'var(--danger)'}">${fmtIQD(t.netProfit)}</span></div>
       ${!t.cogsRows.length ? `<div style="margin-top:14px;font-size:11.5px;color:var(--ink3)">ملاحظة: لا توجد حسابات مصروفات مصنّفة "ضمن تكلفة المبيعات" بعد — يمكن تصنيفها من صفحة دليل الحسابات، وإلى حينها تُحسب كل المصروفات كمصروفات تشغيلية فقط.</div>` : ''}`;
   }
   if (tab === 'tb') {
     const sumD = tb.reduce((s,a)=>s+Number(a.total_debit),0), sumC = tb.reduce((s,a)=>s+Number(a.total_credit),0);
-    return `<div class="card-title">ميزان المراجعة</div><div class="itw"><table><thead><tr><th>الرمز</th><th>الحساب</th><th>مدين</th><th>دائن</th></tr></thead><tbody>
+    return `<div class="card-title">ميزان المراجعة</div><div class="itw"><table><thead><tr><th>الرمز</th><th>الحساب</th><th>مدين (د.ع)</th><th>دائن (د.ع)</th></tr></thead><tbody>
       ${tb.map(a => `<tr><td class="mono">${a.code}</td><td>${a.name}</td><td class="mono">${Number(a.total_debit)?fmt(a.total_debit):'—'}</td><td class="mono">${Number(a.total_credit)?fmt(a.total_credit):'—'}</td></tr>`).join('')}
     </tbody></table></div>
-    <div class="grand-bar"><span class="grand-lbl">الإجمالي</span><span class="grand-val">${fmt(sumD)} / ${fmt(sumC)}</span></div>`;
+    <div class="grand-bar"><span class="grand-lbl">الإجمالي (د.ع)</span><span class="grand-val">${fmtIQD(sumD)} / ${fmtIQD(sumC)}</span></div>`;
   }
   if (tab === 'bs') {
     const assets = tb.filter(a=>a.type==='asset'), liab = tb.filter(a=>a.type==='liability'), eq = tb.filter(a=>a.type==='equity');
@@ -66,10 +65,10 @@ function renderReportBody(tab, tb) {
     const netIncome = incomeStatementTotals(tb).net;
     return `<div class="card-title">الميزانية العمومية</div>
     <div class="fg2">
-      <div><h3 style="font-size:13px;margin-bottom:10px">الأصول</h3>${acctList(assets)}<div class="grand-bar"><span class="grand-lbl">إجمالي الأصول</span><span class="grand-val">${fmt(totalA)}</span></div></div>
+      <div><h3 style="font-size:13px;margin-bottom:10px">الأصول</h3>${acctList(assets)}<div class="grand-bar"><span class="grand-lbl">إجمالي الأصول</span><span class="grand-val">${fmtIQD(totalA)}</span></div></div>
       <div><h3 style="font-size:13px;margin-bottom:10px">الخصوم وحقوق الملكية</h3>${acctList(liab)}${acctList(eq)}
         <div style="display:flex;justify-content:space-between;font-size:12.5px;padding:6px 0"><span>صافي دخل الفترة (يُضاف لحقوق الملكية)</span><span class="mono">${fmt(netIncome)}</span></div>
-        <div class="grand-bar"><span class="grand-lbl">الإجمالي</span><span class="grand-val">${fmt(totalL + totalE + netIncome)}</span></div></div>
+        <div class="grand-bar"><span class="grand-lbl">الإجمالي (د.ع)</span><span class="grand-val">${fmtIQD(totalL + totalE + netIncome)}</span></div></div>
     </div>
     <div style="margin-top:14px;font-size:12px;color:${Math.abs(totalA-(totalL+totalE+netIncome))<0.01?'var(--ok)':'var(--danger)'}">
       ${Math.abs(totalA-(totalL+totalE+netIncome))<0.01 ? '✓ الميزانية متوازنة (الأصول = الخصوم + حقوق الملكية)' : '⚠ فرق في التوازن — راجع القيود'}</div>`;
@@ -78,11 +77,11 @@ function renderReportBody(tab, tb) {
   const { revenue, expense, net } = incomeStatementTotals(tb, true);
   return `<div class="card-title">قائمة الدخل</div>
     <h3 style="font-size:13px;margin-bottom:10px">الإيرادات</h3>${acctList(revenue.rows)}
-    <div class="grand-bar"><span class="grand-lbl">إجمالي الإيرادات</span><span class="grand-val">${fmt(revenue.total)}</span></div>
+    <div class="grand-bar"><span class="grand-lbl">إجمالي الإيرادات</span><span class="grand-val">${fmtIQD(revenue.total)}</span></div>
     <h3 style="font-size:13px;margin:16px 0 10px">المصروفات</h3>${acctList(expense.rows)}
-    <div class="grand-bar"><span class="grand-lbl">إجمالي المصروفات</span><span class="grand-val">${fmt(expense.total)}</span></div>
+    <div class="grand-bar"><span class="grand-lbl">إجمالي المصروفات</span><span class="grand-val">${fmtIQD(expense.total)}</span></div>
     <div class="grand-bar" style="margin-top:16px;background:transparent;border:2px solid var(--border)">
-      <span class="grand-lbl">صافي الربح (الخسارة)</span><span class="grand-val" style="color:${net>=0?'var(--ok)':'var(--danger)'}">${fmt(net)}</span></div>`;
+      <span class="grand-lbl">صافي الربح (الخسارة)</span><span class="grand-val" style="color:${net>=0?'var(--ok)':'var(--danger)'}">${fmtIQD(net)}</span></div>`;
 }
 function acctList(rows) {
   if (!rows.length) return '<div class="ec" style="padding:16px">لا توجد حسابات</div>';
@@ -156,7 +155,7 @@ async function printDocument(doc, items, isReceipt) {
       <td>رقم الوثيقة: <b class="mono">${doc.doc_num}</b></td><td>التاريخ: <b>${doc.doc_date}</b></td><td>المخزن: <b>${doc.warehouses?.name||''}</b></td>
     </tr></table>
     <table style="width:100%;border-collapse:collapse;font-size:12px"><thead><tr style="border-bottom:1px solid #999">
-      <th>#</th><th>الرقم المخزني</th><th>اسم المادة</th><th>الكمية</th><th>${isReceipt?'سعر الوصل':'السعر الوسطي'}</th><th>الإجمالي</th>
+      <th>#</th><th>الرقم المخزني</th><th>اسم المادة</th><th>الكمية</th><th>${isReceipt?'سعر الوصل':'السعر الوسطي'} (د.ع)</th><th>الإجمالي (د.ع)</th>
     </tr></thead><tbody>${rows}</tbody></table>
     <div style="text-align:left;margin-top:10px;font-weight:800">الإجمالي الكلي: ${fmt(doc.total)}</div>
     ${doc.notes ? `<div style="margin-top:10px;font-size:12px">ملاحظات: ${doc.notes}</div>` : ''}
