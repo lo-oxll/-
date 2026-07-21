@@ -4,6 +4,7 @@
 // ══════════════════════════════════════════════════════════════════
 
 PAGE_RENDER.fiscal = async (root) => {
+  if (!can('admin','manager')) { root.innerHTML = '<div class="card ec">لا تملك صلاحية الوصول لهذه الصفحة</div>'; return; }
   const years = await DB.listFiscalYears();
   const active = years.find(y => y.is_active);
   const whs = await DB.listWarehouses();
