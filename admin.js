@@ -2,23 +2,62 @@
 //  الإدارة: المستخدمون والصلاحيات + سجل المراجعة + إعدادات النظام
 // ══════════════════════════════════════════════════════════════════
 PAGE_RENDER.users = async (root) => {
-  const { data: users, error } = await sb.from('profiles').select('*').order('created_at');
+  if (!can('admin','manager')) { root.innerHTML = '<div class="card ec">لا تملك صلاحية الوصول لهذه الصفحة</div>'; return; }
+  const [{ data: users, error }, pending] = await Promise.all([
+    sb.from('profiles').select('*').eq('is_active', true).order('created_at'),
+    DB.listPendingUsers(),
+  ]);
   if (error) { root.innerHTML = `<div class="card ec">تعذر جلب المستخدمين: ${error.message}</div>`; return; }
+  const isAdmin = can('admin');
   root.innerHTML = `
-    <div class="ph"><div><div class="ph-title">المستخدمون والصلاحيات</div><div class="ph-sub">إدارة أدوار المستخدمين في النظام</div></div></div>
-    <div class="card"><div class="itw"><table><thead><tr><th>الاسم</th><th>الدور</th><th>الحالة</th><th></th></tr></thead><tbody>
+    <div class="ph"><div><div class="ph-title">المستخدمون والصلاحيات</div><div class="ph-sub">${isAdmin ? 'إدارة أدوار المستخدمين، والموافقة على الحسابات الجديدة' : 'عرض للاطّلاع فقط — الموافقة وتغيير الأدوار بيد مدير النظام'}</div></div></div>
+
+    ${pending.length ? `<div class="card" style="border:1px solid var(--gold)">
+      <div class="card-title">🕐 حسابات بانتظار الموافقة (${pending.length})</div>
+      <div class="itw"><table><thead><tr><th>الاسم</th><th>تاريخ التسجيل</th>${isAdmin ? '<th>الدور المقترَح</th><th></th>' : ''}</tr></thead><tbody>
+        ${pending.map(u => `<tr><td>${u.full_name}</td><td class="mono">${new Date(u.created_at).toLocaleDateString('ar-IQ')}</td>
+          ${isAdmin ? `
+          <td><select id="pend-role-${u.id}">
+            ${['accountant','central_accountant','manager','auditor'].map(r => `<option value="${r}">${ROLE_LABEL[r]}</option>`).join('')}
+          </select></td>
+          <td>
+            <button class="btn btn-s btn-sm" onclick="approvePendingUser('${u.id}')">✅ الموافقة</button>
+            <button class="btn btn-d btn-sm" onclick="rejectPendingUser('${u.id}','${(u.full_name||'').replace(/'/g,"\\'")}')">❌ رفض</button>
+          </td>` : ''}
+        </tr>`).join('')}
+      </tbody></table></div>
+      ${isAdmin ? `<div style="font-size:11px;color:var(--ink3);margin-top:10px">"رفض" يحذف ملف المستخدم من النظام فقط — حساب الدخول نفسه (البريد/كلمة المرور) يبقى موجوداً بخدمة المصادقة ولازم يُحذف نهائياً من لوحة Supabase لو تحتاج ذلك.</div>` : ''}
+    </div>` : ''}
+
+    <div class="card"><div class="itw"><table><thead><tr><th>الاسم</th><th>الدور</th><th>الحالة</th>${isAdmin ? '<th></th>' : ''}</tr></thead><tbody>
       ${users.map(u => `<tr><td>${u.full_name}</td>
-        <td><select onchange="changeRole('${u.id}', this.value, '${u.role}')">
+        <td>${isAdmin ? `<select onchange="changeRole('${u.id}', this.value, '${u.role}')">
           ${['admin','accountant','central_accountant','manager','auditor'].map(r => `<option value="${r}" ${u.role===r?'selected':''}>${ROLE_LABEL[r]}</option>`).join('')}
-        </select></td>
+        </select>` : `<span class="chip">${ROLE_LABEL[u.role] || u.role}</span>`}</td>
         <td>${u.is_active ? '<span class="chip-ok chip">فعّال</span>' : '<span class="chip-danger chip">موقوف</span>'}</td>
-        <td><button class="btn btn-o btn-sm" onclick="toggleActive('${u.id}', ${!u.is_active})">${u.is_active?'إيقاف':'تفعيل'}</button></td>
+        ${isAdmin ? `<td><button class="btn btn-o btn-sm" onclick="toggleActive('${u.id}', ${!u.is_active})">${u.is_active?'إيقاف':'تفعيل'}</button></td>` : ''}
       </tr>`).join('')}
     </tbody></table></div></div>
 
-    ${can('admin') ? await renderCountSettingsCard() : ''}
+    ${isAdmin ? await renderCountSettingsCard() : ''}
   `;
-  if (can('admin')) bindCountSettingsHandlers();
+  if (isAdmin) bindCountSettingsHandlers();
+};
+window.approvePendingUser = async (id) => {
+  const role = document.getElementById('pend-role-' + id)?.value || 'accountant';
+  try {
+    await DB.approveUser(id, role);
+    toast('✅ تمت الموافقة على الحساب', 's');
+    go('users');
+  } catch (e) { toast('خطأ: ' + e.message, 'e'); }
+};
+window.rejectPendingUser = async (id, name) => {
+  if (!confirm(`متأكد تريد رفض حساب "${name}"؟ سيُحذف ملفه من النظام.`)) return;
+  try {
+    await DB.rejectUser(id);
+    toast('تم رفض الحساب', 's');
+    go('users');
+  } catch (e) { toast('خطأ: ' + e.message, 'e'); }
 };
 window.changeRole = async (id, role, oldRole) => {
   const { error } = await sb.from('profiles').update({ role }).eq('id', id);
@@ -121,7 +160,7 @@ function bindCountSettingsHandlers() {
 }
 
 PAGE_RENDER.auditlog = async (root) => {
-  if (!can('admin','manager','central_accountant')) { root.innerHTML = '<div class="card ec">لا تملك صلاحية الوصول لهذه الصفحة</div>'; return; }
+  if (!can('admin','manager')) { root.innerHTML = '<div class="card ec">لا تملك صلاحية الوصول لهذه الصفحة</div>'; return; }
   const logs = await DB.auditLog(150);
   root.innerHTML = `
     <div class="ph"><div><div class="ph-title">🔐 سجل المراجعة</div><div class="ph-sub">سجل غير قابل للتعديل بكل العمليات الحساسة في النظام</div></div>
