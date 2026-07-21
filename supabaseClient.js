@@ -17,6 +17,23 @@ const DB = {
     if (error) { console.error(error); return null; }
     return data;
   },
+  async listPendingUsers() {
+    const { data, error } = await sb.from('profiles').select('*').eq('is_active', false).order('created_at');
+    if (error) throw error; return data;
+  },
+  // الموافقة على حساب جديد: تفعيله + تحديد دوره (لمدير النظام فقط عبر RLS)
+  async approveUser(id, role) {
+    const { error } = await sb.from('profiles').update({ is_active: true, role }).eq('id', id);
+    if (error) throw error;
+    await this.log('approve_user', 'profiles', id, { role });
+  },
+  // رفض حساب قيد الموافقة: يحذف صف الملف الشخصي فقط (حساب الدخول بحد ذاته يبقى بجدول auth.users
+  // ولا يمكن حذفه من واجهة العميل لأسباب أمنية — لو تحتاج حذفه نهائياً استخدم لوحة Supabase)
+  async rejectUser(id) {
+    const { error } = await sb.from('profiles').delete().eq('id', id);
+    if (error) throw error;
+    await this.log('reject_user', 'profiles', id, {});
+  },
 
   // ── مخازن ─────────────────────────────
   async listWarehouses() {
@@ -119,15 +136,21 @@ const DB = {
     await this.log('create_receipt', 'receipt_docs', rdoc.id, { doc_num: doc.doc_num, items: items.length });
     return rdoc;
   },
-  async listReceipts(limit = 50, fiscalYearId = null, offset = 0) {
-    let q = sb.from('receipt_docs').select('*, warehouses(code,name)').order('created_at', { ascending: false }).range(offset, offset + limit - 1);
+  async listReceipts(limit = 50, fiscalYearId = null, offset = 0, includeCancelled = false) {
+    let q = sb.from('receipt_docs').select('*, warehouses(code,name)').order('seq_no', { ascending: false }).range(offset, offset + limit - 1);
     if (fiscalYearId) q = q.eq('fiscal_year_id', fiscalYearId);
+    if (!includeCancelled) q = q.eq('is_cancelled', false);
     const { data, error } = await q;
     if (error) throw error; return data;
   },
   async getReceiptById(id) {
     const { data, error } = await sb.from('receipt_docs').select('*, warehouses(code,name)').eq('id', id).single();
     if (error) throw error; return data;
+  },
+  async cancelReceipt(id, reason) {
+    const { error } = await sb.rpc('fn_cancel_receipt', { p_receipt_id: id, p_reason: reason || null });
+    if (error) throw error;
+    await this.log('cancel_receipt', 'receipt_docs', id, { reason });
   },
   async receiptItems(receiptId) {
     const { data, error } = await sb.from('receipt_items').select('*, materials(store_num,name,unit)')
@@ -177,9 +200,10 @@ const DB = {
     await this.log('create_issue', 'issue_docs', idoc.id, { doc_num: doc.doc_num, items: items.length });
     return idoc;
   },
-  async listIssues(limit = 50, fiscalYearId = null, offset = 0) {
-    let q = sb.from('issue_docs').select('*, warehouses(code,name)').order('created_at', { ascending: false }).range(offset, offset + limit - 1);
+  async listIssues(limit = 50, fiscalYearId = null, offset = 0, includeCancelled = false) {
+    let q = sb.from('issue_docs').select('*, warehouses(code,name)').order('seq_no', { ascending: false }).range(offset, offset + limit - 1);
     if (fiscalYearId) q = q.eq('fiscal_year_id', fiscalYearId);
+    if (!includeCancelled) q = q.eq('is_cancelled', false);
     const { data, error } = await q;
     if (error) throw error; return data;
   },
@@ -187,15 +211,20 @@ const DB = {
     const { data, error } = await sb.from('issue_docs').select('*, warehouses(code,name)').eq('id', id).single();
     if (error) throw error; return data;
   },
+  async cancelIssue(id, reason) {
+    const { error } = await sb.rpc('fn_cancel_issue', { p_issue_id: id, p_reason: reason || null });
+    if (error) throw error;
+    await this.log('cancel_issue', 'issue_docs', id, { reason });
+  },
   async issueItems(issueId) {
     const { data, error } = await sb.from('issue_items').select('*, materials(store_num,name,unit)')
       .eq('issue_doc_id', issueId);
     if (error) throw error; return data;
   },
-  // قائمة مرتّبة زمنياً (الأقدم أولاً) بمعرّفات الوثائق فقط — تُستخدم للتنقل التالي/السابق حسب التسلسل
+  // قائمة مرتّبة بالتسلسل الآلي الثابت (seq_no) — تُستخدم للتنقل التالي/السابق
   async docIdsOrdered(tab, fiscalYearId = null) {
-    let q = sb.from(tab === 'receipts' ? 'receipt_docs' : 'issue_docs').select('id, doc_num, doc_date, created_at')
-      .order('doc_date', { ascending: true }).order('created_at', { ascending: true });
+    let q = sb.from(tab === 'receipts' ? 'receipt_docs' : 'issue_docs').select('id, doc_num, seq_no')
+      .eq('is_cancelled', false).order('seq_no', { ascending: true });
     if (fiscalYearId) q = q.eq('fiscal_year_id', fiscalYearId);
     const { data, error } = await q;
     if (error) throw error; return data;
