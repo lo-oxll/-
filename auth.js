@@ -3,6 +3,7 @@
 // ══════════════════════════════════════════════════════════════════
 function showLogin() {
   document.getElementById('app-shell').classList.add('hidden');
+  document.getElementById('pending-screen')?.classList.add('hidden');
   document.getElementById('login-screen').classList.remove('hidden');
 }
 window.showLogin = showLogin;
