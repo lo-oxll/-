@@ -392,11 +392,14 @@ PAGE_RENDER.receive = async (root) => {
         <tbody id="r-items"></tbody></table></div>
       <button class="btn btn-o btn-sm" onclick="addItemRow('r', true)">+ إضافة مادة</button>
       <div class="grand-bar"><span class="grand-lbl">الإجمالي الكلي</span><span class="grand-val" id="r-grand">0 د.ع</span></div>
-      <div class="form-foot"><button class="btn btn-p" onclick="submitReceipt()">حفظ وترحيل الوثيقة</button></div>
+      <div class="form-foot">
+        <button class="btn btn-o" onclick="submitReceipt(false)">💾 حفظ فقط</button>
+        <button class="btn btn-p" onclick="submitReceipt(true)">🖨 حفظ وطباعة</button>
+      </div>
     </div>`;
   addItemRow('r', true);
 };
-window.submitReceipt = async () => {
+window.submitReceipt = async (andPrint = false) => {
   const docnum = gv('r-docnum'), date = gv('r-date'), wh = gv('r-wh');
   if (!docnum || !date || !wh) { toast('أكمل بيانات الوثيقة (رقم/تاريخ/مخزن)', 'e'); return; }
   const { rows: items, problems } = collectItemRows('r');
@@ -412,7 +415,8 @@ window.submitReceipt = async () => {
     }
     toast('✅ تم حفظ وترحيل وثيقة الاستلام', 's');
     window.__docSeq = null; // إبطال التسلسل المخزّن مؤقتاً ليعاد جلبه شاملاً الوثيقة الجديدة
-    viewDoc('receipts', rdoc.id, '');
+    await viewDoc('receipts', rdoc.id, '');
+    if (andPrint) printCurrentDoc();
   } catch (e) { toast('خطأ: ' + e.message, 'e'); }
 };
 
@@ -437,7 +441,10 @@ PAGE_RENDER.issue = async (root) => {
         <tbody id="i-items"></tbody></table></div>
       <button class="btn btn-o btn-sm" onclick="addItemRow('i', false)">+ إضافة مادة</button>
       <div class="grand-bar"><span class="grand-lbl">الإجمالي الكلي</span><span class="grand-val" id="i-grand">0 د.ع</span></div>
-      <div class="form-foot"><button class="btn btn-p" onclick="submitIssue()">حفظ وترحيل الوثيقة</button></div>
+      <div class="form-foot">
+        <button class="btn btn-o" onclick="submitIssue(false)">💾 حفظ فقط</button>
+        <button class="btn btn-p" onclick="submitIssue(true)">🖨 حفظ وطباعة</button>
+      </div>
     </div>`;
   addItemRow('i', false);
 };
@@ -455,7 +462,7 @@ window.refreshIssueRowPrices = async () => {
   recalcItems('i');
 };
 
-window.submitIssue = async () => {
+window.submitIssue = async (andPrint = false) => {
   const docnum = gv('i-docnum'), date = gv('i-date'), wh = gv('i-wh');
   if (!docnum || !date || !wh) { toast('أكمل بيانات الوثيقة (رقم/تاريخ/مخزن)', 'e'); return; }
   const { rows: items, problems } = collectItemRows('i');
@@ -471,7 +478,8 @@ window.submitIssue = async () => {
     const idoc = await DB.createIssue({ doc_num: docnum, doc_date: date, warehouse_id: wh, recipient_type: '', recipient_name: '', recipient_person: '', notes: gv('i-notes'), created_by: ME.id }, items);
     toast('✅ تم حفظ وترحيل وثيقة الإصدار', 's');
     window.__docSeq = null;
-    viewDoc('issues', idoc.id, '');
+    await viewDoc('issues', idoc.id, '');
+    if (andPrint) printCurrentDoc();
   } catch (e) { toast(friendlyStockError(e.message), 'e'); }
 };
 
@@ -492,7 +500,7 @@ PAGE_RENDER.docs = async (root, tab = 'receipts', fyId = '') => {
   await loadMoreDocs(root, true);
 };
 async function docsCount(tab, fyId) {
-  let q = sb.from(tab === 'receipts' ? 'receipt_docs' : 'issue_docs').select('id', { count: 'exact', head: true });
+  let q = sb.from(tab === 'receipts' ? 'receipt_docs' : 'issue_docs').select('id', { count: 'exact', head: true }).eq('is_cancelled', false);
   if (fyId) q = q.eq('fiscal_year_id', fyId);
   const { count, error } = await q;
   if (error) throw error;
@@ -526,14 +534,14 @@ function renderDocsPage(root) {
         <button class="btn btn-o btn-sm" onclick="exportDocsExcel('${tab}')">⬇ تصدير إكسل (المحمّل حالياً)</button>
       </div></div>
     <div class="card"><div class="itw"><table><thead><tr>
-      <th>الوثيقة</th><th>التاريخ</th><th>المخزن</th><th>الإجمالي (د.ع)</th><th></th>
+      <th>التسلسل</th><th>الوثيقة</th><th>التاريخ</th><th>المخزن</th><th>الإجمالي (د.ع)</th><th></th>
     </tr></thead><tbody>
       ${st.items.map(d => `<tr>
-        <td><span class="doc-num">${d.doc_num}</span></td><td>${d.doc_date}</td><td>${d.warehouses?.name || ''}</td><td class="gold-txt">${fmt(d.total)}</td>
+        <td class="mono">#${d.seq_no}</td><td><span class="doc-num">${d.doc_num}</span></td><td>${d.doc_date}</td><td>${d.warehouses?.name || ''}</td><td class="gold-txt">${fmt(d.total)}</td>
         <td>
           <button class="btn btn-o btn-sm" onclick="viewDoc('${tab}','${d.id}','${fyId}')">عرض/طباعة</button>
           ${tab === 'receipts' && d.attachment_path ? `<button class="btn btn-o btn-sm" onclick="viewAttachment('${d.attachment_path}')">📎 المرفق</button>` : ''}
-        </td></tr>`).join('') || '<tr><td colspan="5" class="ec">لا توجد وثائق</td></tr>'}
+        </td></tr>`).join('') || '<tr><td colspan="6" class="ec">لا توجد وثائق</td></tr>'}
     </tbody></table></div>
     ${st.hasMore ? `<div class="form-foot" style="justify-content:center"><button class="btn btn-o" onclick="loadMoreDocs(document.getElementById('page-root'))">تحميل المزيد ⬇</button></div>` : ''}
     </div>`;
@@ -542,7 +550,7 @@ function renderDocsPage(root) {
 window.exportDocsExcel = (tab) => {
   const data = window.__docsCache?.[tab] || [];
   const rows = data.map((d, i) => ({
-    'م': i + 1, 'رقم الوثيقة': d.doc_num, 'التاريخ': d.doc_date, 'المخزن': d.warehouses?.name || '', 'الإجمالي': d.total, 'ملاحظات': d.notes || '',
+    'م': i + 1, 'التسلسل الآلي': d.seq_no, 'رقم الوثيقة': d.doc_num, 'التاريخ': d.doc_date, 'المخزن': d.warehouses?.name || '', 'الإجمالي': d.total, 'ملاحظات': d.notes || '',
   }));
   exportRowsToExcel(rows, tab === 'receipts' ? 'وثائق الاستلام' : 'وثائق الإصدار', `${tab === 'receipts' ? 'وثائق_الاستلام' : 'وثائق_الإصدار'}_${todayISO()}.xlsx`);
 };
@@ -583,15 +591,19 @@ async function renderDocDetail(root, tab, id, fyId, seq) {
     <td class="mono">${fmtQty(it.qty)} ${it.materials?.unit||''}</td><td class="mono">${fmt(it.unit_price)}</td><td class="mono gold-txt">${fmt(it.total)}</td></tr>`).join('');
 
   root.innerHTML = `
-    <div class="ph"><div><div class="ph-title">${isR ? '📥 وثيقة استلام' : '📤 وثيقة إصدار'} <span class="doc-num">${doc.doc_num}</span></div>
-      <div class="ph-sub">${idx >= 0 ? `التسلسل ${idx + 1} من ${seq.ids.length}` : ''} — ${doc.doc_date} — ${doc.warehouses?.name || ''}</div></div>
+    <div class="ph"><div><div class="ph-title">${isR ? '📥 وثيقة استلام' : '📤 وثيقة إصدار'} <span class="doc-num">${doc.doc_num}</span> <span class="mono" style="font-size:12px;color:var(--ink3)">— تسلسل آلي #${doc.seq_no}</span></div>
+      <div class="ph-sub">${idx >= 0 ? `ترتيب ${idx + 1} من ${seq.ids.length}` : ''} — ${doc.doc_date} — ${doc.warehouses?.name || ''}${doc.is_cancelled ? ' — <span style="color:var(--danger);font-weight:700">ملغاة</span>' : ''}</div></div>
       <div class="ph-actions">
         <button class="btn btn-o btn-sm" onclick="PAGE_RENDER.docs(document.getElementById('page-root'),'${tab}','${fyId}')">↩ سجل الوثائق</button>
         <button class="btn btn-o btn-sm" ${!prev ? 'disabled style="opacity:.4;cursor:default"' : ''} onclick="${prev ? `viewDoc('${tab}','${prev.id}','${fyId}')` : ''}">⟵ السابق</button>
         <button class="btn btn-o btn-sm" ${!next ? 'disabled style="opacity:.4;cursor:default"' : ''} onclick="${next ? `viewDoc('${tab}','${next.id}','${fyId}')` : ''}">التالي ⟶</button>
         <button class="btn btn-p btn-sm" onclick="printCurrentDoc()">🖨 طباعة / PDF</button>
         ${isR && doc.attachment_path ? `<button class="btn btn-o btn-sm" onclick="viewAttachment('${doc.attachment_path}')">📎 المرفق</button>` : ''}
+        ${can('admin') && !doc.is_cancelled ? `<button class="btn btn-d btn-sm" onclick="deleteDocConfirm('${tab}','${id}','${fyId}')">🗑 حذف الوثيقة</button>` : ''}
       </div></div>
+    ${doc.is_cancelled ? `<div class="card" style="border:1px solid var(--danger);background:rgba(209,85,74,.08)">
+      <div style="font-size:12.5px;color:var(--danger)">🗑 هذه الوثيقة مُلغاة${doc.cancelled_at ? ' بتاريخ ' + new Date(doc.cancelled_at).toLocaleString('ar-IQ') : ''}${doc.cancel_reason ? ' — السبب: ' + doc.cancel_reason : ''}. أثرها على المخزون والحسابات مُعكوس بالكامل.</div>
+    </div>` : ''}
     <div class="card">
       <div class="itw"><table><thead><tr><th>#</th><th>الرقم المخزني</th><th>اسم المادة</th><th>الكمية</th><th>${isR?'سعر الوصل':'السعر الوسطي'} (د.ع)</th><th>الإجمالي (د.ع)</th></tr></thead><tbody>
         ${rowsHTML || '<tr><td colspan="6" class="ec">لا توجد أصناف بهذه الوثيقة</td></tr>'}
@@ -600,6 +612,16 @@ async function renderDocDetail(root, tab, id, fyId, seq) {
       ${doc.notes ? `<div style="margin-top:14px;font-size:12.5px;color:var(--ink2)">ملاحظات: ${doc.notes}</div>` : ''}
     </div>`;
 }
+window.deleteDocConfirm = async (tab, id, fyId) => {
+  const reason = prompt('سبب الحذف (اختياري، يُسجَّل بسجل المراجعة):') || '';
+  if (!confirm('⚠️ سيتم إلغاء هذه الوثيقة وعكس أثرها بالكامل على المخزون والحسابات. هذا الإجراء نهائي، متأكد؟')) return;
+  try {
+    if (tab === 'receipts') await DB.cancelReceipt(id, reason); else await DB.cancelIssue(id, reason);
+    toast('✅ تم حذف (إلغاء) الوثيقة وعكس أثرها بنجاح', 's');
+    window.__docSeq = null;
+    PAGE_RENDER.docs(document.getElementById('page-root'), tab, fyId);
+  } catch (e) { toast('تعذّر الحذف: ' + e.message, 'e'); }
+};
 window.printCurrentDoc = () => {
   const v = window.__currentDocView;
   if (v) printDocument(v.doc, v.items, v.isR);
