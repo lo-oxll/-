@@ -11,14 +11,22 @@ PAGE_RENDER.coa = async (root) => {
     <div class="ph"><div><div class="ph-title">دليل الحسابات</div><div class="ph-sub">الهيكل المحاسبي المستخدم للترحيل التلقائي والقيود اليدوية</div></div>
       <div class="ph-actions">
         <button class="btn btn-o btn-sm" onclick="exportCoaExcel()">⬇ تصدير إكسل</button>
-        ${canEdit ? '<button class="btn btn-p" onclick="openAccModal()">+ إضافة حساب جديد</button>' : ''}
+        ${canEdit ? `
+        <button class="btn btn-o btn-sm" onclick="downloadCoaTemplate()">⬇ قالب استيراد</button>
+        <button class="btn btn-o btn-sm" onclick="document.getElementById('coa-import-file').click()">⬆ استيراد إكسل</button>
+        <input type="file" id="coa-import-file" accept=".xlsx,.xls" class="hidden" onchange="importCoaExcelFile(this.files[0])">
+        <button class="btn btn-p" onclick="openAccModal()">+ إضافة حساب جديد</button>` : ''}
       </div></div>
     <div class="card"><div class="itw"><table><thead><tr><th>الرمز</th><th>اسم الحساب</th><th>النوع</th><th>ضمن تكلفة المبيعات</th>${canEdit ? '<th></th>' : ''}</tr></thead><tbody>
       ${accs.map(a => `<tr><td class="mono">${a.code}</td><td>${a.name}</td><td><span class="chip">${ACC_TYPE_LABEL[a.type]}</span></td>
         <td>${a.is_cogs ? '<span class="chip chip-gold">نعم</span>' : '—'}</td>
-        ${canEdit ? `<td><button class="btn btn-o btn-sm" onclick='openAccModal(${JSON.stringify(a).replace(/'/g,"&#39;")})'>تعديل</button></td>` : ''}
+        ${canEdit ? `<td>
+          <button class="btn btn-o btn-sm" onclick='openAccModal(${JSON.stringify(a).replace(/'/g,"&#39;")})'>تعديل</button>
+          <button class="btn btn-d btn-sm" onclick="deleteAccountConfirm('${a.id}','${a.code}','${(a.name||'').replace(/'/g,"\\'")}')">حذف</button>
+        </td>` : ''}
       </tr>`).join('') || `<tr><td colspan="${canEdit?5:4}" class="ec">لا توجد حسابات</td></tr>`}
-    </tbody></table></div></div>`;
+    </tbody></table></div></div>
+    <div id="coa-import-preview"></div>`;
 };
 window.exportCoaExcel = async () => {
   const accs = await DB.chartOfAccounts();
@@ -27,6 +35,89 @@ window.exportCoaExcel = async () => {
     'دليل الحسابات', `دليل_الحسابات_${todayISO()}.xlsx`
   );
 };
+
+// ── تخمين نوع الحساب تلقائياً من أول رقم بالرمز (نمط شائع بدليل الحسابات الحكومي/العراقي) ──
+// 1 = أصول | 2 = خصوم | 3 = حقوق ملكية | 4 = إيرادات | 5 = مصروفات
+function inferAccountType(code) {
+  const first = String(code).trim()[0];
+  return { '1': 'asset', '2': 'liability', '3': 'equity', '4': 'revenue', '5': 'expense' }[first] || 'asset';
+}
+
+window.downloadCoaTemplate = () => {
+  const ws = XLSX.utils.json_to_sheet([{ 'رمز الحساب': '', 'اسم الحساب': '' }]);
+  ws['!cols'] = [{wch:16},{wch:30}];
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, 'قالب دليل الحسابات');
+  XLSX.writeFile(wb, 'قالب_دليل_الحسابات.xlsx');
+};
+
+// ── استيراد دليل الحسابات: عمودين فقط (رمز الحساب / اسم الحساب) — النوع يُخمَّن تلقائياً
+//    ويُعرَض للمراجعة والتعديل قبل التأكيد النهائي ──────────────────────────────
+window.importCoaExcelFile = async (file) => {
+  if (!file) return;
+  try {
+    const buf = await file.arrayBuffer();
+    const wb = XLSX.read(buf, { type: 'array' });
+    const ws = wb.Sheets[wb.SheetNames[0]];
+    const raw = XLSX.utils.sheet_to_json(ws, { defval: '' });
+    if (!raw.length) { toast('الملف فارغ', 'e'); return; }
+
+    const rows = raw.map(r => {
+      const code = String(r['رمز الحساب'] ?? r['الرمز'] ?? r['code'] ?? '').trim();
+      const name = String(r['اسم الحساب'] ?? r['الاسم'] ?? r['name'] ?? '').trim();
+      return { code, name, type: inferAccountType(code) };
+    }).filter(r => r.code && r.name);
+
+    if (!rows.length) { toast('لم يتم العثور على صفوف صالحة (تحقق من عمودي رمز واسم الحساب)', 'e'); return; }
+    renderCoaImportPreview(rows);
+    document.getElementById('coa-import-file').value = '';
+  } catch (e) { toast('تعذّر قراءة الملف: ' + e.message, 'e'); }
+};
+
+function renderCoaImportPreview(rows) {
+  const el = document.getElementById('coa-import-preview');
+  el.innerHTML = `
+    <div class="card" style="border:1px solid var(--gold)">
+      <div class="card-title">📋 مراجعة الاستيراد قبل التأكيد (${rows.length} حساب)</div>
+      <div style="font-size:12px;color:var(--ink3);margin-bottom:12px">تم تخمين نوع كل حساب تلقائياً من أول رقم برمزه (1=أصول، 2=خصوم، 3=حقوق ملكية، 4=إيرادات، 5=مصروفات) — راجع وعدّل أي نوع غير صحيح قبل التأكيد. الاستيراد يحدّث الحساب الموجود لو الرمز مطابق، أو يضيفه جديداً.</div>
+      <div class="itw"><table><thead><tr><th>الرمز</th><th>اسم الحساب</th><th>النوع</th></tr></thead><tbody id="coa-import-rows">
+        ${rows.map((r, i) => `<tr data-code="${r.code}" data-name="${r.name.replace(/"/g,'&quot;')}">
+          <td class="mono">${r.code}</td><td>${r.name}</td>
+          <td><select class="coa-import-type">
+            ${Object.entries(ACC_TYPE_LABEL).map(([k,v]) => `<option value="${k}" ${k===r.type?'selected':''}>${v}</option>`).join('')}
+          </select></td>
+        </tr>`).join('')}
+      </tbody></table></div>
+      <div class="form-foot">
+        <button class="btn btn-o btn-sm" onclick="document.getElementById('coa-import-preview').innerHTML=''">إلغاء</button>
+        <button class="btn btn-p btn-sm" onclick="confirmCoaImport()">✅ تأكيد الاستيراد</button>
+      </div>
+    </div>`;
+}
+
+window.confirmCoaImport = async () => {
+  const rows = [];
+  document.querySelectorAll('#coa-import-rows tr').forEach(tr => {
+    rows.push({ code: tr.dataset.code, name: tr.dataset.name, type: tr.querySelector('.coa-import-type').value });
+  });
+  if (!rows.length) return;
+  try {
+    const result = await DB.bulkUpsertAccounts(rows);
+    toast(`✅ تم استيراد ${result.ok} حساب${result.fail ? ` — فشل ${result.fail}` : ''}`, result.fail ? 'e' : 's');
+    document.getElementById('coa-import-preview').innerHTML = '';
+    go('coa');
+  } catch (e) { toast('خطأ: ' + e.message, 'e'); }
+};
+
+window.deleteAccountConfirm = async (id, code, name) => {
+  if (!confirm(`متأكد تريد حذف الحساب "${code} — ${name}"؟ لا يمكن حذف حساب له قيود محاسبية سابقة.`)) return;
+  try {
+    await DB.deleteAccount(id);
+    toast('تم حذف الحساب', 's');
+    go('coa');
+  } catch (e) { toast('تعذّر الحذف: ' + e.message, 'e'); }
+};
+
 window.openAccModal = (a = null) => {
   showModal(a ? 'تعديل حساب' : 'إضافة حساب جديد', `
     <div class="fg2" style="margin-bottom:10px">
