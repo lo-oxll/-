@@ -55,9 +55,9 @@ const DB = {
   },
   // حذف ناعم (soft delete): يمنع ظهور المخزن بالقوائم دون فقدان تاريخه بالوثائق والأرصدة
   async deleteWarehouse(id) {
-    const { count, error: e0 } = await sb.from('material_stock').select('id', { count: 'exact', head: true }).eq('warehouse_id', id).gt('qty_on_hand', 0);
+    const { data, error: e0 } = await sb.from('material_stock').select('id').eq('warehouse_id', id).gt('qty_on_hand', 0).limit(1);
     if (e0) throw e0;
-    if (count > 0) throw new Error('لا يمكن حذف مخزن يحتوي رصيد مواد أكبر من صفر — صفّر الرصيد أو رحّله لمخزن آخر أولاً');
+    if (data && data.length > 0) throw new Error('لا يمكن حذف مخزن يحتوي رصيد مواد أكبر من صفر — صفّر الرصيد أو رحّله لمخزن آخر أولاً');
     const { error } = await sb.from('warehouses').update({ is_active: false }).eq('id', id);
     if (error) throw error;
     await this.log('delete_warehouse', 'warehouses', id, {});
