@@ -73,9 +73,9 @@ const PAGES = [
     { id: 'payroll', label: 'الرواتب', icon: '🧑‍💼', roles: ['admin','central_accountant'] },
   ]},
   { section: 'الإدارة', items: [
-    { id: 'fiscal', label: 'السنوات المالية', icon: '📅' },
-    { id: 'users', label: 'المستخدمون والصلاحيات', icon: '👤', roles: ['admin'] },
-    { id: 'auditlog', label: 'سجل المراجعة', icon: '🔐', roles: ['admin','manager','central_accountant'] },
+    { id: 'fiscal', label: 'السنوات المالية', icon: '📅', roles: ['admin','manager'] },
+    { id: 'users', label: 'المستخدمون والصلاحيات', icon: '👤', roles: ['admin','manager'] },
+    { id: 'auditlog', label: 'سجل المراجعة', icon: '🔐', roles: ['admin','manager'] },
   ]},
 ];
 
@@ -121,6 +121,13 @@ async function refreshBadges() {
     const b = document.getElementById('badge-lowstock');
     if (b) { b.textContent = low.length; b.classList.toggle('hidden', low.length === 0); }
   } catch (e) { /* صامت */ }
+  if (can('admin','manager')) {
+    try {
+      const pending = await DB.listPendingUsers();
+      const bu = document.getElementById('badge-users');
+      if (bu) { bu.textContent = pending.length; bu.classList.toggle('hidden', pending.length === 0); }
+    } catch (e) { /* صامت */ }
+  }
 }
 
 // ── مربعات بحث ذاتية الإكمال عامة (تُستخدم لاختيار المواد) ──────────────────────
@@ -164,10 +171,18 @@ async function boot() {
   ME = await DB.currentProfile();
   if (!ME) { showLogin(); return; }
 
+  if (!ME.is_active) { showPending(); return; }
+
   document.getElementById('login-screen').classList.add('hidden');
+  document.getElementById('pending-screen')?.classList.add('hidden');
   document.getElementById('app-shell').classList.remove('hidden');
   renderSidebar();
   go('dashboard');
 }
+window.showPending = function showPending() {
+  document.getElementById('login-screen').classList.add('hidden');
+  document.getElementById('app-shell').classList.add('hidden');
+  document.getElementById('pending-screen')?.classList.remove('hidden');
+};
 
 document.addEventListener('DOMContentLoaded', boot);
