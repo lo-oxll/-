@@ -4,6 +4,24 @@
 const { createClient } = supabase;
 const sb = createClient(window.APP_CONFIG.SUPABASE_URL, window.APP_CONFIG.SUPABASE_ANON_KEY);
 
+// ── ترجمة أخطاء قاعدة البيانات الشائعة لرسائل عربية مفهومة ──────────────────────────────
+function friendlyDbError(error) {
+  if (!error) return error;
+  const msg = error.message || '';
+  const code = error.code || '';
+  if (code === '23505' || msg.includes('duplicate key value violates unique constraint')) {
+    if (msg.includes('warehouses_code_key')) return new Error('رمز المخزن هذا مستخدم من مخزن آخر — اختر رمزاً مختلفاً');
+    if (msg.includes('materials_store_num')) return new Error('الرقم المخزني هذا مستخدم من مادة أخرى بدليل المواد');
+    if (msg.includes('seq_no')) return new Error('تعارض بالتسلسل الآلي للوثيقة — أعد المحاولة');
+    return new Error('هذه القيمة (رمز/رقم) مستخدمة مسبقاً بسجل آخر — تحقق من البيانات وحاول مرة أخرى');
+  }
+  if (code === '23503') return new Error('لا يمكن إتمام العملية لوجود بيانات مرتبطة بهذا السجل بجداول أخرى بالنظام');
+  if (code === '23514') return new Error('القيمة المدخلة لا تحقق أحد شروط قاعدة البيانات: ' + msg);
+  if (code === '42P17') return new Error('خطأ إعداد صلاحيات بقاعدة البيانات (تكرار لا نهائي بسياسات RLS) — تواصل مع مدير النظام');
+  return error;
+}
+window.friendlyDbError = friendlyDbError;
+
 const DB = {
   // ── جلسة وملف المستخدم ─────────────────────────────
   async currentSession() {
@@ -42,20 +60,20 @@ const DB = {
   },
   async createWarehouse(w) {
     const { data, error } = await sb.from('warehouses').insert(w).select().single();
-    if (error) throw error;
+    if (error) throw friendlyDbError(error);
     await this.log('create_warehouse', 'warehouses', data.id, { code: w.code, name: w.name });
     return data;
   },
   async updateWarehouse(id, w) {
     const { data: before } = await sb.from('warehouses').select('*').eq('id', id).maybeSingle();
     const { data, error } = await sb.from('warehouses').update(w).eq('id', id).select().single();
-    if (error) throw error;
+    if (error) throw friendlyDbError(error);
     await this.log('update_warehouse', 'warehouses', id, { old: before ? { code: before.code, name: before.name, location: before.location } : null, new: w });
     return data;
   },
   // حذف ناعم (soft delete): يمنع ظهور المخزن بالقوائم دون فقدان تاريخه بالوثائق والأرصدة
   async deleteWarehouse(id) {
-    const { data, error: e0 } = await sb.from('material_stock').select('id').eq('warehouse_id', id).gt('qty_on_hand', 0).limit(1);
+    const { data, error: e0 } = await sb.from('material_stock').select('material_id').eq('warehouse_id', id).gt('qty_on_hand', 0).limit(1);
     if (e0) throw e0;
     if (data && data.length > 0) throw new Error('لا يمكن حذف مخزن يحتوي رصيد مواد أكبر من صفر — صفّر الرصيد أو رحّله لمخزن آخر أولاً');
     const { error } = await sb.from('warehouses').update({ is_active: false }).eq('id', id);
