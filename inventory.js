@@ -500,11 +500,11 @@ PAGE_RENDER.docs = async (root, tab = 'receipts', fyId = '') => {
   await loadMoreDocs(root, true);
 };
 async function docsCount(tab, fyId) {
-  let q = sb.from(tab === 'receipts' ? 'receipt_docs' : 'issue_docs').select('id', { count: 'exact', head: true }).eq('is_cancelled', false);
+  let q = sb.from(tab === 'receipts' ? 'receipt_docs' : 'issue_docs').select('id', { count: 'exact' }).eq('is_cancelled', false);
   if (fyId) q = q.eq('fiscal_year_id', fyId);
-  const { count, error } = await q;
+  const { data, count, error } = await q;
   if (error) throw error;
-  return count || 0;
+  return count ?? (data ? data.length : 0);
 }
 async function loadMoreDocs(root, reset = false) {
   const st = window.__docsState;
