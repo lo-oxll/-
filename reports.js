@@ -10,8 +10,8 @@ PAGE_RENDER.reports = async (root, tab = 'tb') => {
       <div class="ph-actions">
         <button class="btn ${tab==='tb'?'btn-p':'btn-o'} btn-sm" onclick="PAGE_RENDER.reports(document.getElementById('page-root'),'tb')">ميزان المراجعة</button>
         <button class="btn ${tab==='bs'?'btn-p':'btn-o'} btn-sm" onclick="PAGE_RENDER.reports(document.getElementById('page-root'),'bs')">الميزانية العمومية</button>
-        <button class="btn ${tab==='tp'?'btn-p':'btn-o'} btn-sm" onclick="PAGE_RENDER.reports(document.getElementById('page-root'),'tp')">المتاجرة والأرباح والخسائر</button>
-        <button class="btn ${tab==='pl'?'btn-p':'btn-o'} btn-sm" onclick="PAGE_RENDER.reports(document.getElementById('page-root'),'pl')">قائمة الدخل</button>
+        <button class="btn ${tab==='trading'?'btn-p':'btn-o'} btn-sm" onclick="PAGE_RENDER.reports(document.getElementById('page-root'),'trading')">حساب المتاجرة</button>
+        <button class="btn ${tab==='pl'?'btn-p':'btn-o'} btn-sm" onclick="PAGE_RENDER.reports(document.getElementById('page-root'),'pl')">الأرباح والخسائر</button>
         <button class="btn btn-o btn-sm" onclick="exportReportExcel('${tab}')">⬇ تصدير إكسل</button>
         <button class="btn btn-o btn-sm" onclick="printReport('${tab}')">🖨 طباعة / PDF</button>
       </div></div>
@@ -33,7 +33,7 @@ function tradingPlTotals(tb) {
 }
 
 function renderReportBody(tab, tb) {
-  if (tab === 'tp') {
+  if (tab === 'trading') {
     const t = tradingPlTotals(tb);
     return `<div class="card-title">حساب المتاجرة</div>
       <h3 style="font-size:13px;margin-bottom:10px">الإيرادات (المبيعات)</h3>${acctList(t.revRows)}
@@ -42,14 +42,17 @@ function renderReportBody(tab, tb) {
       <div class="grand-bar"><span class="grand-lbl">إجمالي تكلفة المبيعات</span><span class="grand-val">${fmtIQD(t.cogsTotal)}</span></div>
       <div class="grand-bar" style="margin-top:16px;background:transparent;border:2px solid var(--border)">
         <span class="grand-lbl">مجمل الربح (نتيجة المتاجرة)</span><span class="grand-val" style="color:${t.grossProfit>=0?'var(--ok)':'var(--danger)'}">${fmtIQD(t.grossProfit)}</span></div>
-
-      <div class="card-title" style="margin-top:26px">حساب الأرباح والخسائر</div>
-      <div style="display:flex;justify-content:space-between;font-size:12.5px;padding:6px 0"><span>مجمل الربح المرحّل من حساب المتاجرة</span><span class="mono">${fmtIQD(t.grossProfit)}</span></div>
+      ${!t.cogsRows.length ? `<div style="margin-top:14px;font-size:11.5px;color:var(--ink3)">ملاحظة: لا توجد حسابات مصروفات مصنّفة "ضمن تكلفة المبيعات" بعد — يمكن تصنيفها من صفحة دليل الحسابات، وإلى حينها تُحسب كل المصروفات ضمن تقرير "الأرباح والخسائر" فقط.</div>` : ''}
+      <div style="margin-top:14px;font-size:11.5px;color:var(--ink3)">💡 مجمل الربح هنا يُرحَّل تلقائياً لتقرير "الأرباح والخسائر" المنفصل.</div>`;
+  }
+  if (tab === 'pl') {
+    const t = tradingPlTotals(tb);
+    return `<div class="card-title">حساب الأرباح والخسائر</div>
+      <div style="display:flex;justify-content:space-between;font-size:13px;padding:8px 0;border-bottom:1px solid var(--border-soft);margin-bottom:10px"><span>مجمل الربح المرحّل من حساب المتاجرة</span><span class="mono gold-txt">${fmtIQD(t.grossProfit)}</span></div>
       <h3 style="font-size:13px;margin:16px 0 10px">المصروفات الإدارية والتشغيلية</h3>${acctList(t.opexRows)}
       <div class="grand-bar"><span class="grand-lbl">إجمالي المصروفات</span><span class="grand-val">${fmtIQD(t.opexTotal)}</span></div>
       <div class="grand-bar" style="margin-top:16px;background:transparent;border:2px solid var(--border)">
-        <span class="grand-lbl">صافي الربح (الخسارة)</span><span class="grand-val" style="color:${t.netProfit>=0?'var(--ok)':'var(--danger)'}">${fmtIQD(t.netProfit)}</span></div>
-      ${!t.cogsRows.length ? `<div style="margin-top:14px;font-size:11.5px;color:var(--ink3)">ملاحظة: لا توجد حسابات مصروفات مصنّفة "ضمن تكلفة المبيعات" بعد — يمكن تصنيفها من صفحة دليل الحسابات، وإلى حينها تُحسب كل المصروفات كمصروفات تشغيلية فقط.</div>` : ''}`;
+        <span class="grand-lbl">صافي الربح (الخسارة)</span><span class="grand-val" style="color:${t.netProfit>=0?'var(--ok)':'var(--danger)'}">${fmtIQD(t.netProfit)}</span></div>`;
   }
   if (tab === 'tb') {
     const sumD = tb.reduce((s,a)=>s+Number(a.total_debit),0), sumC = tb.reduce((s,a)=>s+Number(a.total_credit),0);
@@ -73,15 +76,7 @@ function renderReportBody(tab, tb) {
     <div style="margin-top:14px;font-size:12px;color:${Math.abs(totalA-(totalL+totalE+netIncome))<0.01?'var(--ok)':'var(--danger)'}">
       ${Math.abs(totalA-(totalL+totalE+netIncome))<0.01 ? '✓ الميزانية متوازنة (الأصول = الخصوم + حقوق الملكية)' : '⚠ فرق في التوازن — راجع القيود'}</div>`;
   }
-  // pl
-  const { revenue, expense, net } = incomeStatementTotals(tb, true);
-  return `<div class="card-title">قائمة الدخل</div>
-    <h3 style="font-size:13px;margin-bottom:10px">الإيرادات</h3>${acctList(revenue.rows)}
-    <div class="grand-bar"><span class="grand-lbl">إجمالي الإيرادات</span><span class="grand-val">${fmtIQD(revenue.total)}</span></div>
-    <h3 style="font-size:13px;margin:16px 0 10px">المصروفات</h3>${acctList(expense.rows)}
-    <div class="grand-bar"><span class="grand-lbl">إجمالي المصروفات</span><span class="grand-val">${fmtIQD(expense.total)}</span></div>
-    <div class="grand-bar" style="margin-top:16px;background:transparent;border:2px solid var(--border)">
-      <span class="grand-lbl">صافي الربح (الخسارة)</span><span class="grand-val" style="color:${net>=0?'var(--ok)':'var(--danger)'}">${fmtIQD(net)}</span></div>`;
+  return '<div class="ec">اختر تقريراً</div>';
 }
 function acctList(rows) {
   if (!rows.length) return '<div class="ec" style="padding:16px">لا توجد حسابات</div>';
@@ -101,16 +96,25 @@ window.exportReportExcel = async (tab) => {
   const cogsCodes = new Set(accs.filter(a => a.is_cogs).map(a => a.code));
   const tb = tbRaw.map(a => ({ ...a, is_cogs: cogsCodes.has(a.code) }));
   let rows = [], sheetName = '', fname = '';
-  if (tab === 'tp') {
+  if (tab === 'trading') {
     const t = tradingPlTotals(tb);
     rows = [
-      ...t.revRows.map(a => ({ 'القسم': 'المتاجرة — الإيرادات', 'الرمز': a.code, 'الحساب': a.name, 'المبلغ': Math.abs(Number(a.net_debit)) })),
-      ...t.cogsRows.map(a => ({ 'القسم': 'المتاجرة — تكلفة المبيعات', 'الرمز': a.code, 'الحساب': a.name, 'المبلغ': Math.abs(Number(a.net_debit)) })),
-      { 'القسم': 'المتاجرة', 'الرمز': '', 'الحساب': 'مجمل الربح', 'المبلغ': t.grossProfit },
-      ...t.opexRows.map(a => ({ 'القسم': 'أرباح وخسائر — مصروفات', 'الرمز': a.code, 'الحساب': a.name, 'المبلغ': Math.abs(Number(a.net_debit)) })),
+      ...t.revRows.map(a => ({ 'القسم': 'الإيرادات', 'الرمز': a.code, 'الحساب': a.name, 'المبلغ': Math.abs(Number(a.net_debit)) })),
+      ...t.cogsRows.map(a => ({ 'القسم': 'تكلفة المبيعات', 'الرمز': a.code, 'الحساب': a.name, 'المبلغ': Math.abs(Number(a.net_debit)) })),
+      { 'القسم': 'الصافي', 'الرمز': '', 'الحساب': 'مجمل الربح (نتيجة المتاجرة)', 'المبلغ': t.grossProfit },
+    ];
+    sheetName = 'حساب المتاجرة'; fname = `حساب_المتاجرة_${todayISO()}.xlsx`;
+    exportRowsToExcel(rows, sheetName, fname);
+    return;
+  }
+  if (tab === 'pl') {
+    const t = tradingPlTotals(tb);
+    rows = [
+      { 'القسم': 'مرحّل', 'الرمز': '', 'الحساب': 'مجمل الربح المرحّل من حساب المتاجرة', 'المبلغ': t.grossProfit },
+      ...t.opexRows.map(a => ({ 'القسم': 'المصروفات', 'الرمز': a.code, 'الحساب': a.name, 'المبلغ': Math.abs(Number(a.net_debit)) })),
       { 'القسم': 'الصافي', 'الرمز': '', 'الحساب': 'صافي الربح (الخسارة)', 'المبلغ': t.netProfit },
     ];
-    sheetName = 'المتاجرة والأرباح والخسائر'; fname = `المتاجرة_والأرباح_والخسائر_${todayISO()}.xlsx`;
+    sheetName = 'الأرباح والخسائر'; fname = `الأرباح_والخسائر_${todayISO()}.xlsx`;
     exportRowsToExcel(rows, sheetName, fname);
     return;
   }
@@ -127,14 +131,6 @@ window.exportReportExcel = async (tab) => {
       { 'القسم': 'حقوق الملكية', 'الرمز': '', 'الحساب': 'صافي دخل الفترة', 'الرصيد': netIncome },
     ];
     sheetName = 'الميزانية العمومية'; fname = `الميزانية_العمومية_${todayISO()}.xlsx`;
-  } else {
-    const { revenue, expense, net } = incomeStatementTotals(tb, true);
-    rows = [
-      ...revenue.rows.map(a => ({ 'القسم': 'الإيرادات', 'الرمز': a.code, 'الحساب': a.name, 'المبلغ': Math.abs(Number(a.net_debit)) })),
-      ...expense.rows.map(a => ({ 'القسم': 'المصروفات', 'الرمز': a.code, 'الحساب': a.name, 'المبلغ': Math.abs(Number(a.net_debit)) })),
-      { 'القسم': 'الصافي', 'الرمز': '', 'الحساب': 'صافي الربح (الخسارة)', 'المبلغ': net },
-    ];
-    sheetName = 'قائمة الدخل'; fname = `قائمة_الدخل_${todayISO()}.xlsx`;
   }
   exportRowsToExcel(rows, sheetName, fname);
 };
@@ -145,19 +141,19 @@ window.printReport = async (tab) => {
   await renderPrintArea(reportTitle(tab), body);
   window.print();
 };
-function reportTitle(tab) { return tab === 'tb' ? 'ميزان المراجعة' : tab === 'bs' ? 'الميزانية العمومية' : tab === 'tp' ? 'المتاجرة والأرباح والخسائر' : 'قائمة الدخل'; }
+function reportTitle(tab) { return tab === 'tb' ? 'ميزان المراجعة' : tab === 'bs' ? 'الميزانية العمومية' : tab === 'trading' ? 'حساب المتاجرة' : 'الأرباح والخسائر'; }
 
 async function printDocument(doc, items, isReceipt) {
   const rows = items.map((it, i) => `<tr><td>${i+1}</td><td class="mono">${it.materials.store_num}</td><td>${it.materials.name}</td>
     <td>${fmtQty(it.qty)} ${it.materials.unit}</td><td class="mono">${fmt(it.unit_price)}</td><td class="mono">${fmt(it.total)}</td></tr>`).join('');
   const html = `
     <table style="width:100%;font-size:12px;margin-bottom:14px"><tr>
-      <td>رقم الوثيقة: <b class="mono">${doc.doc_num}</b></td><td>التاريخ: <b>${doc.doc_date}</b></td><td>المخزن: <b>${doc.warehouses?.name||''}</b></td>
+      <td>رقم الوثيقة: <b class="mono">${doc.doc_num}</b></td><td>التسلسل الآلي: <b class="mono">#${doc.seq_no}</b></td><td>التاريخ: <b>${doc.doc_date}</b></td><td>المخزن: <b>${doc.warehouses?.name||''}</b></td>
     </tr></table>
     <table style="width:100%;border-collapse:collapse;font-size:12px"><thead><tr style="border-bottom:1px solid #999">
       <th>#</th><th>الرقم المخزني</th><th>اسم المادة</th><th>الكمية</th><th>${isReceipt?'سعر الوصل':'السعر الوسطي'} (د.ع)</th><th>الإجمالي (د.ع)</th>
     </tr></thead><tbody>${rows}</tbody></table>
-    <div style="text-align:left;margin-top:10px;font-weight:800">الإجمالي الكلي: ${fmt(doc.total)}</div>
+    <div style="text-align:left;margin-top:10px;font-weight:800">الإجمالي الكلي: ${fmtIQD(doc.total)}</div>
     ${doc.notes ? `<div style="margin-top:10px;font-size:12px">ملاحظات: ${doc.notes}</div>` : ''}
     <div style="display:flex;justify-content:space-between;margin-top:50px;font-size:12px">
       <div>توقيع أمين المخزن: ____________________</div><div>توقيع المحاسب: ____________________</div><div>توقيع المدير: ____________________</div>
