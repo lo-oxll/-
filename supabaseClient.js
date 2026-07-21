@@ -10,7 +10,7 @@ function friendlyDbError(error) {
   const msg = error.message || '';
   const code = error.code || '';
   if (code === '23505' || msg.includes('duplicate key value violates unique constraint')) {
-    if (msg.includes('warehouses_code_key')) return new Error('رمز المخزن هذا مستخدم من مخزن آخر — اختر رمزاً مختلفاً');
+    if (msg.includes('warehouses_code_key') || msg.includes('warehouses_code_active_uk')) return new Error('رمز المخزن هذا مستخدم من مخزن آخر فعّال — اختر رمزاً مختلفاً');
     if (msg.includes('materials_store_num')) return new Error('الرقم المخزني هذا مستخدم من مادة أخرى بدليل المواد');
     if (msg.includes('seq_no')) return new Error('تعارض بالتسلسل الآلي للوثيقة — أعد المحاولة');
     return new Error('هذه القيمة (رمز/رقم) مستخدمة مسبقاً بسجل آخر — تحقق من البيانات وحاول مرة أخرى');
