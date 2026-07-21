@@ -253,6 +253,35 @@ const DB = {
     const { data, error } = await sb.from('chart_of_accounts').select('*').order('code');
     if (error) throw error; return data;
   },
+  // استيراد جماعي من إكسل — يحدّث الحساب لو الرمز موجود، أو يضيفه جديداً
+  async bulkUpsertAccounts(rows) {
+    let ok = 0, fail = 0; const errors = [];
+    for (const r of rows) {
+      try {
+        const { error } = await sb.from('chart_of_accounts')
+          .upsert({ code: r.code, name: r.name, type: r.type, is_cogs: r.type === 'expense' ? (r.is_cogs || false) : false }, { onConflict: 'code' });
+        if (error) throw friendlyDbError(error);
+        ok++;
+      } catch (e) { fail++; errors.push(`${r.code}: ${e.message}`); }
+    }
+    await this.log('import_chart_of_accounts', 'chart_of_accounts', null, { ok, fail, total: rows.length });
+    if (errors.length) console.warn('أخطاء استيراد دليل الحسابات:', errors);
+    return { ok, fail, errors };
+  },
+  // حذف حساب: يُمنع لو له قيود محاسبية أو أرصدة افتتاحية مرتبطة (يحمي التاريخ المحاسبي)
+  async deleteAccount(id) {
+    const [{ data: d1, error: e1 }, { data: d2, error: e2 }] = await Promise.all([
+      sb.from('journal_lines').select('id').eq('account_id', id).limit(1),
+      sb.from('opening_balances').select('id').eq('account_id', id).limit(1),
+    ]);
+    if (e1) throw e1; if (e2) throw e2;
+    if ((d1 && d1.length) || (d2 && d2.length)) {
+      throw new Error('لا يمكن حذف هذا الحساب — له قيود محاسبية أو أرصدة افتتاحية مسجّلة بالفعل. يمكنك تعديل اسمه بدلاً من حذفه.');
+    }
+    const { error } = await sb.from('chart_of_accounts').delete().eq('id', id);
+    if (error) throw friendlyDbError(error);
+    await this.log('delete_account', 'chart_of_accounts', id, {});
+  },
   async trialBalance() {
     const { data, error } = await sb.from('v_trial_balance').select('*');
     if (error) throw error; return data;
