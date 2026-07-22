@@ -137,6 +137,12 @@ const DB = {
     if (warehouseId) q = q.eq('warehouse_id', warehouseId);
     const { data, error } = await q; if (error) throw error; return data;
   },
+  // حذف رصيد مادة بمخزن معيّن نهائياً — مدير النظام فقط (لا يعدّل تاريخ الوثائق، فقط يمحو سطر الرصيد الحالي)
+  async deleteMaterialStock(materialId, warehouseId) {
+    const { error } = await sb.from('material_stock').delete().eq('material_id', materialId).eq('warehouse_id', warehouseId);
+    if (error) throw friendlyDbError(error);
+    await this.log('delete_material_stock', 'material_stock', materialId, { warehouse_id: warehouseId });
+  },
 
   // ── استيراد أرصدة التدوير (الافتتاحية) حسب المخزن ─────────────────────────────
   // rows: [{ store_num, qty, unit_price }] — يُحدَّث رصيد material_stock فوراً + يُسجَّل بجدول opening_balances لهذه السنة
@@ -507,6 +513,59 @@ const DB = {
     const { error } = await sb.from('cash_transactions').delete().eq('id', id);
     if (error) throw friendlyDbError(error);
     await this.log('delete_cash_transaction', 'cash_transactions', id, { desc });
+  },
+  // حذف عملية مطابقة جرد صندوق — مدير النظام فقط (سجل توثيقي، بلا قيد محاسبي مرتبط)
+  async deleteCashReconciliation(id) {
+    const { error } = await sb.from('cash_reconciliations').delete().eq('id', id);
+    if (error) throw friendlyDbError(error);
+    await this.log('delete_cash_reconciliation', 'cash_reconciliations', id, {});
+  },
+
+  // ── تغذية السلفة المستديمة (Petty Cash Advances) ─────────────────────────────
+  async listPettyCashAdvances(limit = 200) {
+    const { data, error } = await sb.from('petty_cash_advances').select('*, chart_of_accounts(code,name), profiles(full_name)').order('advance_date', { ascending: false }).limit(limit);
+    if (error) throw error; return data;
+  },
+  // رصيد صندوق السلفة المستديمة الحالي = مجموع التغذيات - مجموع سندات الصرف غير الملغاة
+  async pettyCashFundBalance() {
+    const [{ data: adv, error: e1 }, { data: vch, error: e2 }] = await Promise.all([
+      sb.from('petty_cash_advances').select('amount'),
+      sb.from('petty_cash_vouchers').select('total_amount').eq('is_cancelled', false),
+    ]);
+    if (e1) throw e1; if (e2) throw e2;
+    const totalAdv = adv.reduce((s, r) => s + Number(r.amount), 0);
+    const totalSpent = vch.reduce((s, r) => s + Number(r.total_amount), 0);
+    return { totalAdv, totalSpent, balance: totalAdv - totalSpent };
+  },
+  // تسجيل تغذية جديدة للسلفة المستديمة (مدين حساب السلفة، دائن حساب المصدر) — تنشئ قيداً محاسبياً فوراً
+  async createPettyCashAdvance(a) {
+    const pettyCashAcc = await this.getSetting('petty_cash_account_id');
+    if (!pettyCashAcc) throw new Error('يجب ضبط "حساب السلفة المستديمة" أولاً من صفحة المستخدمون والصلاحيات');
+    const je = await this.postManualEntry({
+      entry_no: 'JE-PCADV-' + Date.now(), entry_date: a.advance_date, ref_type: 'petty_cash_advance',
+      description: 'تغذية السلفة المستديمة' + (a.notes ? ' - ' + a.notes : ''),
+    }, [
+      { account_id: pettyCashAcc, debit: a.amount, credit: 0 },
+      { account_id: a.source_account_id, debit: 0, credit: a.amount },
+    ]);
+    const session = await this.currentSession();
+    const { data, error } = await sb.from('petty_cash_advances').insert({
+      advance_date: a.advance_date, amount: a.amount, source_account_id: a.source_account_id,
+      notes: a.notes || null, journal_entry_id: je.id, created_by: session?.user?.id,
+    }).select().single();
+    if (error) throw friendlyDbError(error);
+    await this.log('create_petty_cash_advance', 'petty_cash_advances', data.id, { amount: a.amount });
+    return data;
+  },
+  // حذف تغذية سلفة — مدير النظام فقط. يحذف القيد المرتبط أيضاً
+  async deletePettyCashAdvance(id, journalEntryId, amount) {
+    if (journalEntryId) {
+      const { error: eJ } = await sb.rpc('fn_admin_delete_journal_entry', { p_entry_id: journalEntryId });
+      if (eJ) throw friendlyDbError(eJ);
+    }
+    const { error } = await sb.from('petty_cash_advances').delete().eq('id', id);
+    if (error) throw friendlyDbError(error);
+    await this.log('delete_petty_cash_advance', 'petty_cash_advances', id, { amount });
   },
 
   // ── الرواتب (Payroll) ─────────────────────────────
