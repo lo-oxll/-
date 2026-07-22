@@ -667,10 +667,12 @@ PAGE_RENDER.balance = async (root, whId = '') => {
         </select>
         <button class="btn btn-o btn-sm" onclick="exportBalanceExcel('${whId}')">⬇ تصدير إكسل</button>
       </div></div>
-    <div class="card"><div class="itw"><table><thead><tr><th>الرقم المخزني</th><th>المادة</th><th>المخزن</th><th>الرصيد</th><th>السعر الوسطي (د.ع)</th><th>القيمة (د.ع)</th></tr></thead><tbody>
+    <div class="card"><div class="itw"><table><thead><tr><th>الرقم المخزني</th><th>المادة</th><th>المخزن</th><th>الرصيد</th><th>السعر الوسطي (د.ع)</th><th>القيمة (د.ع)</th>${can('admin') ? '<th></th>' : ''}</tr></thead><tbody>
       ${stock.map(s => `<tr><td class="mono">${s.materials?.store_num || ''}</td><td>${s.materials?.name || ''}</td><td>${s.warehouses?.name || ''}</td>
         <td class="${s.qty_on_hand <= (s.materials?.min_qty||0) && s.materials?.min_qty>0 ? 'chip-danger' : ''}" style="${s.qty_on_hand <= (s.materials?.min_qty||0) && s.materials?.min_qty>0 ? 'padding:2px 8px;border-radius:6px' : ''}">${fmtQty(s.qty_on_hand)} ${s.materials?.unit||''}</td>
-        <td class="mono">${fmt(s.avg_price)}</td><td class="gold-txt">${fmt(s.qty_on_hand * s.avg_price)}</td></tr>`).join('') || '<tr><td colspan="6" class="ec">لا توجد أرصدة بعد</td></tr>'}
+        <td class="mono">${fmt(s.avg_price)}</td><td class="gold-txt">${fmt(s.qty_on_hand * s.avg_price)}</td>
+        ${can('admin') ? `<td><button class="btn btn-d btn-sm" onclick="deleteBalanceConfirm('${s.material_id}','${s.warehouse_id}','${(s.materials?.name||'').replace(/'/g,"\\'")}','${(s.warehouses?.name||'').replace(/'/g,"\\'")}')">🗑 حذف</button></td>` : ''}
+      </tr>`).join('') || `<tr><td colspan="${can('admin')?7:6}" class="ec">لا توجد أرصدة بعد</td></tr>`}
     </tbody></table></div>
     <div class="grand-bar"><span class="grand-lbl">إجمالي قيمة المخزون</span><span class="grand-val">${fmtIQD(stock.reduce((s,x)=>s+x.qty_on_hand*x.avg_price,0))}</span></div>
     </div>`;
@@ -682,6 +684,15 @@ window.exportBalanceExcel = async (whId) => {
       'الرصيد': s.qty_on_hand, 'الوحدة': s.materials?.unit||'', 'السعر الوسطي': s.avg_price, 'القيمة': s.qty_on_hand * s.avg_price })),
     'الأرصدة والجرد', `الأرصدة_والجرد_${todayISO()}.xlsx`
   );
+};
+// حذف سطر رصيد مادة بمخزن معيّن نهائياً — مدير النظام فقط. لا يمس تاريخ الوثائق، فقط يمحو الرصيد الحالي المعروض
+window.deleteBalanceConfirm = async (materialId, warehouseId, matName, whName) => {
+  if (!confirm(`⚠️ حذف نهائي لرصيد المادة "${matName}" بمخزن "${whName}" من هذه الشاشة. هذا لا يحذف تاريخ وثائق الاستلام/الإصدار، فقط يصفّر/يمحو سطر الرصيد الحالي المعروض هنا. متابعة؟`)) return;
+  try {
+    await DB.deleteMaterialStock(materialId, warehouseId);
+    toast('تم حذف الرصيد', 's');
+    go('balance');
+  } catch (e) { toast('تعذر الحذف: ' + e.message, 'e'); }
 };
 
 // ── تنبيهات إعادة الطلب ──────────────────────────────
@@ -859,6 +870,18 @@ function showModal(title, bodyHTML, onSave) {
   document.body.appendChild(bg);
   bg.querySelector('[data-x]').onclick = () => bg.remove();
   bg.addEventListener('mousedown', e => { if (e.target === bg) bg.remove(); });
-  bg.querySelector('[data-s]').onclick = async () => { const ok = await onSave(); if (ok !== false) bg.remove(); };
+  bg.querySelector('[data-s]').onclick = async (e) => {
+    const btn = e.currentTarget;
+    if (btn.disabled) return; // يمنع الحفظ المزدوج عند النقر السريع المتكرر
+    btn.disabled = true;
+    const prevText = btn.textContent;
+    btn.textContent = 'جارِ الحفظ...';
+    try {
+      const ok = await onSave();
+      if (ok !== false) { bg.remove(); return; }
+    } finally {
+      if (document.body.contains(bg)) { btn.disabled = false; btn.textContent = prevText; }
+    }
+  };
 }
 window.showModal = showModal;
