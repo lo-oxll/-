@@ -75,6 +75,9 @@ const PAGES = [
     { id: 'cashbox', label: 'صندوق المركز', icon: '💰', roles: ['admin','central_accountant'] },
     { id: 'payroll', label: 'الرواتب', icon: '🧑‍💼', roles: ['admin','central_accountant'] },
   ]},
+  { section: 'السلفة المستديمة', items: [
+    { id: 'pettycash', label: 'سندات الصرف', icon: '🧾', roles: ['admin','central_accountant','manager','auditor'] },
+  ]},
   { section: 'الإدارة', items: [
     { id: 'fiscal', label: 'السنوات المالية', icon: '📅', roles: ['admin','manager'] },
     { id: 'users', label: 'المستخدمون والصلاحيات', icon: '👤', roles: ['admin','manager'] },
