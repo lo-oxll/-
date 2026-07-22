@@ -16,7 +16,7 @@ PAGE_RENDER.pettycash = async (root, mode = 'list', voucherId = null) => {
   const vouchers = await DB.listPettyCashVouchers();
   root.innerHTML = `
     <div class="ph"><div><div class="ph-title">🧾 السلفة المستديمة — سندات الصرف</div><div class="ph-sub">كل سند يُرحَّل فوراً بقيد محاسبي: مدين حساب المخزون (للمواد) و/أو حسابات المصروفات (للبنود غير المخزنية)، ودائن حساب السلفة المستديمة</div></div>
-      ${canWrite ? `<div class="ph-actions"><button class="btn btn-p" onclick="PAGE_RENDER.pettycash(document.getElementById('page-root'),'new')">+ سند صرف جديد</button></div>` : ''}
+      ${canWrite ? `<div class="ph-actions"><button class="btn btn-o" onclick="go('pettycashfund')">📒 قائمة السلفة</button><button class="btn btn-p" onclick="PAGE_RENDER.pettycash(document.getElementById('page-root'),'new')">+ سند صرف جديد</button></div>` : ''}
     </div>
     <div class="card"><div class="itw"><table><thead><tr>
       <th>تسلسل</th><th>رقم المستند</th><th>التاريخ</th><th>اسم المحل</th><th>المبلغ الكلي</th><th>الحالة</th><th></th>
@@ -284,4 +284,67 @@ window.printPettyCash = async (id) => {
     </div>`;
   await renderPrintArea('سند صرف سلفة مستديمة', html);
   window.print();
+};
+
+// ════════════════════════════════════════════════════════════════
+//  قائمة السلفة — سجل تغذية صندوق العهدة + الرصيد المتبقي
+// ════════════════════════════════════════════════════════════════
+PAGE_RENDER.pettycashfund = async (root) => {
+  if (!can('admin','central_accountant','manager','auditor')) { root.innerHTML = '<div class="card ec">لا تملك صلاحية الوصول لهذه الصفحة</div>'; return; }
+  const [fund, advances, accs] = await Promise.all([DB.pettyCashFundBalance(), DB.listPettyCashAdvances(), DB.chartOfAccounts()]);
+  const canWrite = can('admin','central_accountant');
+  root.innerHTML = `
+    <div class="ph"><div><div class="ph-title">📒 قائمة السلفة المستديمة</div><div class="ph-sub">سجل تغذية صندوق العهدة (النقل إليه من الصندوق المركزي/البنك) مقابل إجمالي ما صُرف بسندات الصرف</div></div>
+      <div class="ph-actions">
+        <button class="btn btn-o" onclick="go('pettycash')">◀ سندات الصرف</button>
+        ${canWrite ? `<button class="btn btn-p" onclick="openAdvanceModal()">+ تغذية جديدة للسلفة</button>` : ''}
+      </div>
+    </div>
+    <div class="stats">
+      <div class="stat"><div class="stat-lbl">إجمالي التغذيات</div><div class="stat-val" style="color:var(--ok)">${fmt(fund.totalAdv)}</div></div>
+      <div class="stat"><div class="stat-lbl">إجمالي المصروف (سندات غير ملغاة)</div><div class="stat-val danger">${fmt(fund.totalSpent)}</div></div>
+      <div class="stat"><div class="stat-lbl">الرصيد المتبقي بالسلفة</div><div class="stat-val gold">${fmt(fund.balance)}</div></div>
+    </div>
+    <div class="card"><div class="card-title">سجل التغذيات</div><div class="itw"><table><thead><tr>
+      <th>التاريخ</th><th>المبلغ</th><th>مصدر التمويل</th><th>ملاحظات</th><th>بواسطة</th>${can('admin') ? '<th></th>' : ''}
+    </tr></thead><tbody>
+      ${advances.map(a => `<tr>
+        <td class="mono">${a.advance_date}</td><td class="gold-txt mono">${fmt(a.amount)}</td>
+        <td>${a.chart_of_accounts ? `${a.chart_of_accounts.code} — ${a.chart_of_accounts.name}` : '—'}</td>
+        <td style="font-size:12px">${a.notes || '—'}</td><td>${a.profiles?.full_name || '—'}</td>
+        ${can('admin') ? `<td><button class="btn btn-d btn-sm" onclick="deleteAdvanceConfirm('${a.id}','${a.journal_entry_id||''}',${a.amount})">🗑 حذف</button></td>` : ''}
+      </tr>`).join('') || `<tr><td colspan="${can('admin')?6:5}" class="ec">لا توجد تغذيات مسجّلة بعد</td></tr>`}
+    </tbody></table></div></div>
+    <div id="pca-acc-cache" class="hidden">${JSON.stringify(accs)}</div>
+  `;
+};
+
+window.openAdvanceModal = () => {
+  const accs = JSON.parse(document.getElementById('pca-acc-cache').textContent);
+  const opts = accs.map(a => `<option value="${a.id}">${a.code} — ${a.name}</option>`).join('');
+  showModal('+ تغذية جديدة للسلفة المستديمة', `
+    <div class="fg2" style="margin-bottom:10px">
+      <div class="fgroup"><label>التاريخ *</label><input type="date" id="m-adv-date" value="${todayISO()}"></div>
+      <div class="fgroup"><label>المبلغ (د.ع) *</label><input type="number" id="m-adv-amount"></div>
+      <div class="fgroup s2"><label>مصدر التمويل (الحساب المقابل) *</label><select id="m-adv-acc"><option value="">— اختر حساب —</option>${opts}</select></div>
+      <div class="fgroup s2"><label>ملاحظات</label><input id="m-adv-notes"></div>
+    </div>
+  `, async () => {
+    const amount = Number(gv('m-adv-amount')), acc = gv('m-adv-acc'), date = gv('m-adv-date');
+    if (!amount || amount <= 0) { toast('أدخل مبلغاً صحيحاً', 'e'); return false; }
+    if (!acc) { toast('اختر مصدر التمويل', 'e'); return false; }
+    try {
+      await DB.createPettyCashAdvance({ advance_date: date, amount, source_account_id: acc, notes: gv('m-adv-notes') });
+      toast('تم تسجيل التغذية', 's');
+      go('pettycashfund'); return true;
+    } catch (e) { toast('خطأ: ' + e.message, 'e'); return false; }
+  });
+};
+window.deleteAdvanceConfirm = async (id, journalEntryId, amount) => {
+  if (!confirm(`⚠️ حذف نهائي لتغذية بمبلغ ${fmtIQD(amount)} وقيدها المحاسبي المرتبط. متابعة؟`)) return;
+  try {
+    await DB.deletePettyCashAdvance(id, journalEntryId || null, amount);
+    toast('تم الحذف', 's');
+    go('pettycashfund');
+  } catch (e) { toast('تعذر الحذف: ' + e.message, 'e'); }
 };
