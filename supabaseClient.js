@@ -52,6 +52,13 @@ const DB = {
     if (error) throw error;
     await this.log('reject_user', 'profiles', id, {});
   },
+  // حذف نهائي لملف مستخدم فعّال (مدير النظام فقط عبر RLS) — حساب الدخول
+  // نفسه بخدمة المصادقة يبقى ويحتاج حذفاً يدوياً من لوحة Supabase
+  async hardDeleteUser(id, name) {
+    const { error } = await sb.from('profiles').delete().eq('id', id);
+    if (error) throw friendlyDbError(error);
+    await this.log('hard_delete_user', 'profiles', id, { name });
+  },
 
   // ── مخازن ─────────────────────────────
   async listWarehouses() {
@@ -80,6 +87,16 @@ const DB = {
     if (error) throw error;
     await this.log('delete_warehouse', 'warehouses', id, {});
   },
+  // حذف نهائي (Hard Delete) — مدير النظام فقط. يحذف صفوف الرصيد الخاصة بهذا
+  // المخزن أولاً؛ إن كان له وثائق استلام/إصدار تاريخية سيُرفض الحذف تلقائياً
+  // من قيد FID بقاعدة البيانات لحماية السجل التاريخي (هذا سلوك مقصود وآمن)
+  async hardDeleteWarehouse(id, name) {
+    const { error: e1 } = await sb.from('material_stock').delete().eq('warehouse_id', id);
+    if (e1) throw friendlyDbError(e1);
+    const { error } = await sb.from('warehouses').delete().eq('id', id);
+    if (error) throw friendlyDbError(error);
+    await this.log('hard_delete_warehouse', 'warehouses', id, { name });
+  },
 
   // ── دليل المواد ─────────────────────────────
   // offset/limit تدعم "تحميل المزيد" (pagination) بدل جلب كل السجلات دفعة واحدة
@@ -97,14 +114,12 @@ const DB = {
       before ? { old: { name: before.name, unit: before.unit, category: before.category, min_qty: before.min_qty }, new: m } : { new: m });
     return data;
   },
-  // حذف مادة (ناعم — is_active=false): يُمنع لو عندها رصيد أكبر من صفر بأي مخزن
-  async deleteMaterial(id) {
-    const { data, error: e0 } = await sb.from('material_stock').select('material_id').eq('material_id', id).gt('qty_on_hand', 0).limit(1);
-    if (e0) throw e0;
-    if (data && data.length) throw new Error('لا يمكن حذف مادة لها رصيد أكبر من صفر بأحد المخازن — صفّر رصيدها أولاً (إصدار أو تسوية جرد)');
-    const { error } = await sb.from('materials').update({ is_active: false }).eq('id', id);
+  // حذف نهائي لمادة — مدير النظام فقط. يُرفض تلقائياً لو للمادة رصيد أو
+  // استخدام سابق بوثائق استلام/إصدار أو أرصدة افتتاحية (حماية من قاعدة البيانات)
+  async deleteMaterial(id, storeNum) {
+    const { error } = await sb.from('materials').delete().eq('id', id);
     if (error) throw friendlyDbError(error);
-    await this.log('delete_material', 'materials', id, {});
+    await this.log('delete_material', 'materials', id, { store_num: storeNum });
   },
 
   // ── الأرصدة والسعر الوسطي ─────────────────────────────
@@ -291,6 +306,14 @@ const DB = {
     if (error) throw friendlyDbError(error);
     await this.log('delete_account', 'chart_of_accounts', id, {});
   },
+  // حذف نهائي/إجباري لحساب حتى لو له قيود سابقة — مدير النظام فقط.
+  // ⚠️ يحذف كل سطور القيود الخاصة بهذا الحساب، ما قد يكسر توازن قيود
+  // مرتبطة. استخدمه بحذر شديد (راجع تنبيه الواجهة قبل الاستدعاء).
+  async forceDeleteAccount(id, code) {
+    const { error } = await sb.rpc('fn_admin_force_delete_account', { p_account_id: id });
+    if (error) throw friendlyDbError(error);
+    await this.log('force_delete_account', 'chart_of_accounts', id, { code });
+  },
   async trialBalance() {
     const { data, error } = await sb.from('v_trial_balance').select('*');
     if (error) throw error; return data;
@@ -312,6 +335,15 @@ const DB = {
     await this.log('post_journal', 'journal_entries', je.id, { entry_no: entry.entry_no });
     return je;
   },
+  // حذف قيد محاسبي كامل (رأس + سطور) — مدير النظام فقط.
+  // ⚠️ لو القيد ناتج تلقائياً عن وثيقة استلام/إصدار أو تسوية جرد أو راتب،
+  // حذفه هنا لا يعكس أثره على المخزون/الصندوق — استخدم "حذف الوثيقة" أو
+  // إلغاء العملية الأصلية لو أردت عكساً كاملاً وآمناً للأثر.
+  async deleteJournalEntry(id, entryNo) {
+    const { error } = await sb.rpc('fn_admin_delete_journal_entry', { p_entry_id: id });
+    if (error) throw friendlyDbError(error);
+    await this.log('delete_journal_entry', 'journal_entries', id, { entry_no: entryNo });
+  },
 
   // ── السنوات المالية ─────────────────────────────
   async listFiscalYears() {
@@ -331,6 +363,16 @@ const DB = {
   async openingBalances(fiscalYearId) {
     const { data, error } = await sb.from('v_opening_balances').select('*').eq('fiscal_year_id', fiscalYearId).order('seq');
     if (error) throw error; return data;
+  },
+  // حذف سنة مالية مؤرشفة (غير نشطة) — مدير النظام فقط. يُرفض تلقائياً
+  // لو للسنة وثائق استلام/إصدار أو أرصدة افتتاحية مسجّلة (حماية FK)
+  async deleteFiscalYear(id, year, isActive) {
+    if (isActive) throw new Error('لا يمكن حذف السنة المالية النشطة حالياً');
+    const { error: e1 } = await sb.from('opening_balances').delete().eq('fiscal_year_id', id);
+    if (e1) throw friendlyDbError(e1);
+    const { error } = await sb.from('fiscal_years').delete().eq('id', id);
+    if (error) throw friendlyDbError(error);
+    await this.log('delete_fiscal_year', 'fiscal_years', id, { year });
   },
 
   // ── الجرد الدوري (Physical Count) ─────────────────────────────
@@ -356,14 +398,15 @@ const DB = {
     if (error) throw error;
     await this.log('post_physical_count', 'physical_counts', countId, {});
   },
-  // حذف جرد بحالة "مسودة" فقط — الجرد المُرحَّل لا يُحذف مباشرة لأنه غيّر الأرصدة وأنشأ قيداً محاسبياً
-  async deletePhysicalCount(countId) {
-    const { data: pc, error: e0 } = await sb.from('physical_counts').select('status').eq('id', countId).single();
-    if (e0) throw e0;
-    if (pc.status === 'posted') throw new Error('لا يمكن حذف جرد مُرحَّل محاسبياً — غيّر الأرصدة وأنشأ قيداً بالفعل. تواصل مع محاسب المركز لعمل قيد تسوية عكسي بدلاً من ذلك.');
-    const { error } = await sb.from('physical_counts').delete().eq('id', countId);
+  // حذف عملية جرد كاملة — مدير النظام فقط. لو كانت "مُرحَّلة" فإن قيد
+  // التسوية المحاسبي الناتج عنها لا يُحذف تلقائياً (احذفه يدوياً من صفحة
+  // القيود المحاسبية إن أردت عكس أثره بالكامل)
+  async deletePhysicalCount(id, countNo) {
+    const { error: e1 } = await sb.from('count_items').delete().eq('count_id', id);
+    if (e1) throw friendlyDbError(e1);
+    const { error } = await sb.from('physical_counts').delete().eq('id', id);
     if (error) throw friendlyDbError(error);
-    await this.log('delete_physical_count', 'physical_counts', countId, {});
+    await this.log('delete_physical_count', 'physical_counts', id, { count_no: countNo });
   },
 
   // ── إعدادات النظام (مفتاح/قيمة) — تُستخدم لضبط حسابات فروقات الجرد ─────────────────────────────
@@ -416,33 +459,16 @@ const DB = {
   },
 
   // ── صندوق المركز (Cash Box) ─────────────────────────────
-  // ascending=true تُستخدم لكشف الحساب (لحساب الرصيد الجاري)، false لعرض أحدث الحركات أولاً
-  async listCashTransactions(limit = 200, fromDate = null, toDate = null, ascending = false) {
-    let q = sb.from('cash_transactions').select('*, chart_of_accounts(code,name)')
-      .order('trans_date', { ascending }).order('voucher_no', { ascending }).limit(limit);
-    if (fromDate) q = q.gte('trans_date', fromDate);
-    if (toDate) q = q.lte('trans_date', toDate);
-    const { data, error } = await q;
+  async listCashTransactions(limit = 200) {
+    const { data, error } = await sb.from('cash_transactions').select('*, chart_of_accounts(code,name)').order('trans_date', { ascending: false }).order('created_at', { ascending: false }).limit(limit);
     if (error) throw error; return data;
-  },
-  async getCashTransactionById(id) {
-    const { data, error } = await sb.from('cash_transactions').select('*, chart_of_accounts(code,name)').eq('id', id).single();
-    if (error) throw error; return data;
-  },
-  // الرصيد الافتتاحي لفترة معينة = صافي كل الحركات قبل تاريخ البداية
-  async cashBalanceBefore(date) {
-    let q = sb.from('cash_transactions').select('type, amount');
-    if (date) q = q.lt('trans_date', date);
-    const { data, error } = await q;
-    if (error) throw error;
-    return (data || []).reduce((s, t) => s + (t.type === 'in' ? Number(t.amount) : -Number(t.amount)), 0);
   },
   async cashBalance() {
     const { data, error } = await sb.from('cash_transactions').select('type, amount');
     if (error) throw error;
     return (data || []).reduce((s, t) => s + (t.type === 'in' ? Number(t.amount) : -Number(t.amount)), 0);
   },
-  // ينشئ حركة صندوق + قيد يدوي مرتبط بها (الطرف الآخر = counterparty_account_id) — برقم سند آلي تسلسلي
+  // ينشئ حركة صندوق + قيد يدوي مرتبط بها (الطرف الآخر = counterparty_account_id)
   async createCashTransaction(t) {
     const cashAccId = await this.getSetting('cashbox_account_id');
     if (!cashAccId) throw new Error('يجب ضبط "حساب الصندوق/النقدية" أولاً من صفحة المستخدمون والصلاحيات');
@@ -458,7 +484,7 @@ const DB = {
       trans_date: t.trans_date, type: t.type, amount: t.amount, description: t.description,
       counterparty_account_id: t.counterparty_account_id, journal_entry_id: je.id, created_by: session?.user?.id,
     }).select().single();
-    if (error) throw friendlyDbError(error);
+    if (error) throw error;
     return data;
   },
   async listCashReconciliations(limit = 50) {
@@ -472,17 +498,15 @@ const DB = {
     await this.log('cash_reconciliation', 'cash_reconciliations', data.id, { diff: r.counted_amount - r.system_balance });
     return data;
   },
-  // حذف حركة صندوق — يحذف القيد المحاسبي المرتبط بها أيضاً (سطوره تُحذف تلقائياً بـ ON DELETE CASCADE)
-  async deleteCashTransaction(id) {
-    const { data: txn, error: e0 } = await sb.from('cash_transactions').select('journal_entry_id').eq('id', id).single();
-    if (e0) throw e0;
+  // حذف حركة صندوق — مدير النظام فقط. يحذف القيد اليدوي المرتبط بها أيضاً
+  async deleteCashTransaction(id, journalEntryId, desc) {
+    if (journalEntryId) {
+      const { error: eJ } = await sb.rpc('fn_admin_delete_journal_entry', { p_entry_id: journalEntryId });
+      if (eJ) throw friendlyDbError(eJ);
+    }
     const { error } = await sb.from('cash_transactions').delete().eq('id', id);
     if (error) throw friendlyDbError(error);
-    if (txn?.journal_entry_id) {
-      await sb.from('journal_lines').delete().eq('entry_id', txn.journal_entry_id);
-      await sb.from('journal_entries').delete().eq('id', txn.journal_entry_id);
-    }
-    await this.log('delete_cash_transaction', 'cash_transactions', id, {});
+    await this.log('delete_cash_transaction', 'cash_transactions', id, { desc });
   },
 
   // ── الرواتب (Payroll) ─────────────────────────────
@@ -495,75 +519,86 @@ const DB = {
     const { data, error } = await sb.from('employees').upsert(e).select().single();
     if (error) throw error; return data;
   },
-  // حذف موظف: يُمنع لو له كشوفات رواتب مسجّلة بالفعل (يقترح إيقافه بدلاً من ذلك)
-  async deleteEmployee(id) {
-    const { data, error: e0 } = await sb.from('payroll_items').select('id').eq('employee_id', id).limit(1);
-    if (e0) throw e0;
-    if (data && data.length) throw new Error('لا يمكن حذف موظف له كشوفات رواتب مسجّلة سابقاً — أوقفه (إلغاء تفعيل) بدلاً من الحذف.');
+  // إنشاء موظف جديد — مدير النظام ومحاسب المركز
+  async createEmployee(e) {
+    const { data, error } = await sb.from('employees').insert(e).select().single();
+    if (error) throw friendlyDbError(error);
+    await this.log('create_employee', 'employees', data.id, { name: e.full_name });
+    return data;
+  },
+  // تعديل جزئي لموظف (لا يمسح بقية الأعمدة كما قد يفعل upsert الكامل)
+  async updateEmployee(id, patch) {
+    const { data, error } = await sb.from('employees').update(patch).eq('id', id).select().single();
+    if (error) throw friendlyDbError(error);
+    await this.log('update_employee', 'employees', id, patch);
+    return data;
+  },
+  async toggleEmployeeActive(id, val) {
+    const { error } = await sb.from('employees').update({ is_active: val }).eq('id', id);
+    if (error) throw friendlyDbError(error);
+    await this.log(val ? 'activate_employee' : 'deactivate_employee', 'employees', id, {});
+  },
+  // حذف نهائي لموظف — يُرفض تلقائياً لو له سطور بكشوفات رواتب سابقة (حماية FK)
+  async deleteEmployee(id, name) {
     const { error } = await sb.from('employees').delete().eq('id', id);
     if (error) throw friendlyDbError(error);
-    await this.log('delete_employee', 'employees', id, {});
+    await this.log('delete_employee', 'employees', id, { name });
   },
   async listPayrollRuns() {
     const { data, error } = await sb.from('payroll_runs').select('*').order('period', { ascending: false });
     if (error) throw error; return data;
   },
+  async getPayrollRun(id) {
+    const { data, error } = await sb.from('payroll_runs').select('*').eq('id', id).single();
+    if (error) throw error; return data;
+  },
   async createPayrollRun(run, items) {
     const { data: pr, error: e1 } = await sb.from('payroll_runs').insert(run).select().single();
-    if (e1) throw e1;
+    if (e1) throw friendlyDbError(e1);
     if (items.length) {
-      const rows = items.map((it, i) => ({ ...it, run_id: pr.id, seq_no: i + 1 }));
+      const rows = items.map(it => ({ ...it, run_id: pr.id }));
       const { error: e2 } = await sb.from('payroll_items').insert(rows);
-      if (e2) { await sb.from('payroll_runs').delete().eq('id', pr.id); throw friendlyDbError(e2); }
+      if (e2) throw friendlyDbError(e2);
     }
     await this.log('create_payroll_run', 'payroll_runs', pr.id, { period: run.period, items: items.length });
     return pr;
   },
-  // استبدال كامل صفوف كشف رواتب (مسودة فقط) — أبسط وأضمن من محاولة مطابقة الصفوف المعدَّلة/المحذوفة/المضافة فردياً
+  // تعديل رأس الكشف (الفترة/العنوان) — مسودة فقط عملياً بحكم RLS
+  async updatePayrollRun(id, patch) {
+    const { error } = await sb.from('payroll_runs').update(patch).eq('id', id);
+    if (error) throw friendlyDbError(error);
+  },
+  // استبدال كامل لأصناف كشف الراتب (يُستخدم عند حفظ تعديلات على مسودة)
   async replacePayrollItems(runId, items) {
-    const { data: run, error: e0 } = await sb.from('payroll_runs').select('status').eq('id', runId).single();
-    if (e0) throw e0;
-    if (run.status === 'posted') throw new Error('لا يمكن تعديل كشف رواتب مُرحَّل محاسبياً');
     const { error: e1 } = await sb.from('payroll_items').delete().eq('run_id', runId);
     if (e1) throw friendlyDbError(e1);
     if (items.length) {
-      const rows = items.map((it, i) => ({ ...it, run_id: runId, seq_no: i + 1 }));
+      const rows = items.map(it => ({ ...it, run_id: runId }));
       const { error: e2 } = await sb.from('payroll_items').insert(rows);
       if (e2) throw friendlyDbError(e2);
     }
-    await this.log('update_payroll_items', 'payroll_runs', runId, { items: items.length });
-  },
-  // حذف كشف رواتب بحالة "مسودة" فقط — الكشف المُرحَّل له قيد محاسبي بالفعل
-  async deletePayrollRun(id) {
-    const { data: run, error: e0 } = await sb.from('payroll_runs').select('status').eq('id', id).single();
-    if (e0) throw e0;
-    if (run.status === 'posted') throw new Error('لا يمكن حذف كشف رواتب مُرحَّل محاسبياً. تواصل مع محاسب المركز لعمل قيد تسوية عكسي بدلاً من ذلك.');
-    const { error } = await sb.from('payroll_runs').delete().eq('id', id);
-    if (error) throw friendlyDbError(error);
-    await this.log('delete_payroll_run', 'payroll_runs', id, {});
   },
   async payrollItems(runId) {
-    const { data, error } = await sb.from('payroll_items').select('*, employees(full_name,job_title)').eq('run_id', runId).order('seq_no');
+    const { data, error } = await sb.from('payroll_items').select('*, employees(full_name,job_title)').eq('run_id', runId);
     if (error) throw error; return data;
-  },
-  // آخر كشف رواتب موجود (أي حالة) — يُستخدم كقالب بداية لكشف جديد بما إن الأسماء والرواتب تتغير شهرياً
-  async latestPayrollItemsTemplate() {
-    const { data: runs, error: e0 } = await sb.from('payroll_runs').select('id, period').order('created_at', { ascending: false }).limit(1);
-    if (e0) throw e0;
-    if (!runs || !runs.length) return [];
-    const items = await this.payrollItems(runs[0].id);
-    return items.map(it => ({
-      employee_id: it.employee_id, employee_name: it.employee_name, base_salary: it.base_salary,
-      raise_5pct: it.raise_5pct, other_additions: it.other_additions, social_security: it.social_security,
-      absence_days: 0, absence_amount: 0, loan_deduction: it.loan_deduction, dependents_count: it.dependents_count,
-      subscription_amount: it.subscription_amount, health_insurance: it.health_insurance, martyrs_fund: it.martyrs_fund,
-      other_deductions: it.other_deductions, notes: it.notes,
-    }));
   },
   async postPayrollRun(runId) {
     const { error } = await sb.rpc('fn_post_payroll_journal', { p_run_id: runId });
-    if (error) throw error;
+    if (error) throw friendlyDbError(error);
     await this.log('post_payroll_run', 'payroll_runs', runId, {});
+  },
+  // حذف كشف راتب كامل — محاسب المركز: مسودات فقط. مدير النظام: أي كشف
+  // (ويحذف معه القيد المحاسبي المرتبط لو كان مُرحَّلاً)
+  async deletePayrollRun(id, period, journalEntryId) {
+    if (journalEntryId) {
+      const { error: eJ } = await sb.rpc('fn_admin_delete_journal_entry', { p_entry_id: journalEntryId });
+      if (eJ) throw friendlyDbError(eJ);
+    }
+    const { error: e1 } = await sb.from('payroll_items').delete().eq('run_id', id);
+    if (e1) throw friendlyDbError(e1);
+    const { error } = await sb.from('payroll_runs').delete().eq('id', id);
+    if (error) throw friendlyDbError(error);
+    await this.log('delete_payroll_run', 'payroll_runs', id, { period });
   },
 
   // ── سجل المراجعة ─────────────────────────────
