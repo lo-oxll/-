@@ -496,11 +496,12 @@ PAGE_RENDER.cashbox = async (root) => {
     </tbody></table></div></div>
 
     <div class="card" style="border:1px dashed var(--border)"><div class="card-title">⚖️ آخر عمليات المطابقة (الجرد المفاجئ للصندوق)</div>
-      <div class="itw"><table><thead><tr><th>التاريخ</th><th>الرصيد الدفتري</th><th>الرصيد الفعلي (المعدود)</th><th>الفرق</th><th>بواسطة</th></tr></thead><tbody>
+      <div class="itw"><table><thead><tr><th>التاريخ</th><th>الرصيد الدفتري</th><th>الرصيد الفعلي (المعدود)</th><th>الفرق</th><th>بواسطة</th>${can('admin') ? '<th></th>' : ''}</tr></thead><tbody>
         ${recons.map(r => { const diff = Number(r.counted_amount) - Number(r.system_balance); return `<tr>
           <td class="mono">${new Date(r.recon_date).toLocaleString('ar-IQ')}</td><td class="mono">${fmt(r.system_balance)}</td><td class="mono">${fmt(r.counted_amount)}</td>
           <td class="mono" style="color:${diff===0?'var(--ok)':'var(--danger)'}">${diff>0?'+':''}${fmt(diff)}</td><td>${r.profiles?.full_name || '—'}</td>
-        </tr>`; }).join('') || '<tr><td colspan="5" class="ec">لا توجد عمليات مطابقة مسجّلة بعد</td></tr>'}
+          ${can('admin') ? `<td><button class="btn btn-d btn-sm" onclick="deleteCashReconConfirm('${r.id}')">🗑 حذف</button></td>` : ''}
+        </tr>`; }).join('') || `<tr><td colspan="${can('admin')?6:5}" class="ec">لا توجد عمليات مطابقة مسجّلة بعد</td></tr>`}
       </tbody></table></div>
     </div>
     <div id="cash-acc-cache" class="hidden">${JSON.stringify(accs)}</div>
@@ -549,6 +550,15 @@ window.deleteCashTxnConfirm = async (id, journalEntryId, desc) => {
   try {
     await DB.deleteCashTransaction(id, journalEntryId || null, desc);
     toast('تم حذف الحركة', 's');
+    go('cashbox');
+  } catch (e) { toast('تعذر الحذف: ' + e.message, 'e'); }
+};
+// حذف سجل مطابقة جرد صندوق — مدير النظام فقط (سجل توثيقي فقط، بلا أثر مالي/قيد)
+window.deleteCashReconConfirm = async (id) => {
+  if (!confirm('⚠️ حذف نهائي لسجل مطابقة الجرد هذا. متابعة؟')) return;
+  try {
+    await DB.deleteCashReconciliation(id);
+    toast('تم حذف سجل المطابقة', 's');
     go('cashbox');
   } catch (e) { toast('تعذر الحذف: ' + e.message, 'e'); }
 };
