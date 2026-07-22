@@ -110,6 +110,7 @@ PAGE_RENDER.warehouses = async (root) => {
         <td>
           <button class="btn btn-o btn-sm" onclick='openWhModal(${JSON.stringify(w).replace(/'/g,"&#39;")})'>تعديل</button>
           <button class="btn btn-d btn-sm" onclick="deleteWarehouseConfirm('${w.id}', '${(w.name||'').replace(/'/g,"\\'")}')">حذف</button>
+          ${can('admin') ? `<button class="btn btn-d btn-sm" onclick="hardDeleteWarehouseConfirm('${w.id}', '${(w.name||'').replace(/'/g,"\\'")}')">🗑 حذف نهائي</button>` : ''}
         </td></tr>`).join('') || '<tr><td colspan="4" class="ec">لا توجد مخازن مسجّلة</td></tr>'}
     </tbody></table></div></div>`;
 };
@@ -138,6 +139,15 @@ window.deleteWarehouseConfirm = async (id, name) => {
   try {
     await DB.deleteWarehouse(id);
     toast('تم حذف المخزن', 's');
+    go('warehouses');
+  } catch (e) { toast('تعذر الحذف: ' + e.message, 'e'); }
+};
+// حذف نهائي (Hard Delete) — مدير النظام فقط. يُرفض تلقائياً لو للمخزن وثائق تاريخية
+window.hardDeleteWarehouseConfirm = async (id, name) => {
+  if (!confirm(`⚠️ حذف نهائي للمخزن "${name}" وكل أرصدته الحالية من قاعدة البيانات. سيُرفض تلقائياً لو للمخزن وثائق استلام/إصدار سابقة (حماية للسجل التاريخي). هذا الإجراء لا يمكن التراجع عنه. متابعة؟`)) return;
+  try {
+    await DB.hardDeleteWarehouse(id, name);
+    toast('تم حذف المخزن نهائياً', 's');
     go('warehouses');
   } catch (e) { toast('تعذر الحذف: ' + e.message, 'e'); }
 };
@@ -170,7 +180,9 @@ function renderMaterialsPage(root, st) {
       </div></div>
     <div class="card"><div class="itw"><table><thead><tr><th>الرقم المخزني</th><th>الاسم</th><th>الوحدة</th><th>التصنيف</th><th>حد إعادة الطلب</th><th></th></tr></thead><tbody>
       ${st.items.map(m => `<tr><td class="mono">${m.store_num}</td><td>${m.name}</td><td>${m.unit}</td><td>${m.category || '—'}</td><td>${fmtQty(m.min_qty)}</td>
-        <td><button class="btn btn-o btn-sm" onclick='openMatModal(${JSON.stringify(m).replace(/'/g,"&#39;")})'>تعديل</button></td></tr>`).join('') || '<tr><td colspan="6" class="ec">لا توجد نتائج</td></tr>'}
+        <td><button class="btn btn-o btn-sm" onclick='openMatModal(${JSON.stringify(m).replace(/'/g,"&#39;")})'>تعديل</button>
+        ${can('admin') ? `<button class="btn btn-d btn-sm" onclick="deleteMaterialConfirm('${m.id}','${(m.store_num||'').replace(/'/g,"\\'")}','${(m.name||'').replace(/'/g,"\\'")}')">حذف</button>` : ''}
+        </td></tr>`).join('') || '<tr><td colspan="6" class="ec">لا توجد نتائج</td></tr>'}
     </tbody></table></div>
     ${st.hasMore ? `<div class="form-foot" style="justify-content:center"><button class="btn btn-o" onclick="loadMoreMaterials(document.getElementById('page-root'))">تحميل المزيد ⬇</button></div>` : ''}
     </div>`;
@@ -245,6 +257,15 @@ window.openMatModal = (m = null) => {
       toast('تم الحفظ', 's'); go('materials'); return true;
     } catch (e) { toast('خطأ: ' + e.message, 'e'); return false; }
   });
+};
+// حذف نهائي لمادة — مدير النظام فقط. يُرفض تلقائياً لو للمادة رصيد أو استخدام سابق
+window.deleteMaterialConfirm = async (id, storeNum, name) => {
+  if (!confirm(`⚠️ حذف نهائي للمادة "${storeNum} — ${name}" من دليل المواد. سيُرفض الحذف تلقائياً لو للمادة رصيد حالي أو استخدام سابق بوثائق استلام/إصدار. متابعة؟`)) return;
+  try {
+    await DB.deleteMaterial(id, storeNum);
+    toast('تم حذف المادة نهائياً', 's');
+    go('materials');
+  } catch (e) { toast('تعذر الحذف: ' + e.message, 'e'); }
 };
 
 // ── مكوّن عام: صفوف مواد لوثيقة استلام/إصدار ──────────────────────────────
@@ -690,7 +711,9 @@ PAGE_RENDER.physcount = async (root, mode = 'list', countId = '') => {
     <div class="card"><div class="itw"><table><thead><tr><th>رقم الجرد</th><th>المخزن</th><th>التاريخ</th><th>الحالة</th><th></th></tr></thead><tbody>
       ${counts.map(c => `<tr><td class="mono">${c.count_no}</td><td>${c.warehouses?.name || ''}</td><td class="mono">${c.count_date}</td>
         <td>${c.status === 'posted' ? '<span class="chip-ok chip">مُرحَّل</span>' : '<span class="chip chip-gold">مسودة</span>'}</td>
-        <td><button class="btn btn-o btn-sm" onclick="PAGE_RENDER.physcount(document.getElementById('page-root'),'view','${c.id}')">عرض</button></td></tr>`).join('') || '<tr><td colspan="5" class="ec">لا توجد عمليات جرد بعد</td></tr>'}
+        <td><button class="btn btn-o btn-sm" onclick="PAGE_RENDER.physcount(document.getElementById('page-root'),'view','${c.id}')">عرض</button>
+        ${can('admin') ? `<button class="btn btn-d btn-sm" onclick="deletePhysCountConfirm('${c.id}','${(c.count_no||'').replace(/'/g,"\\'")}',${c.status==='posted'})">🗑 حذف</button>` : ''}
+        </td></tr>`).join('') || '<tr><td colspan="5" class="ec">لا توجد عمليات جرد بعد</td></tr>'}
     </tbody></table></div></div>`;
 };
 
@@ -784,6 +807,7 @@ async function renderPhysCountView(root, countId) {
         <button class="btn btn-o btn-sm" onclick="PAGE_RENDER.physcount(document.getElementById('page-root'),'list')">↩ رجوع للقائمة</button>
         <button class="btn btn-o btn-sm" onclick="exportPhysCountExcel('${countId}')">⬇ تصدير إكسل</button>
         ${c.status !== 'posted' && can('admin','accountant') ? `<button class="btn btn-p btn-sm" onclick="postPhysCountConfirm('${countId}')">🔒 ترحيل الجرد وإنشاء قيد التسوية</button>` : ''}
+        ${can('admin') ? `<button class="btn btn-d btn-sm" onclick="deletePhysCountConfirm('${countId}','${(c.count_no||'').replace(/'/g,"\\'")}',${c.status==='posted'})">🗑 حذف نهائي</button>` : ''}
       </div></div>
     ${c.status !== 'posted' ? `<div class="card" style="border:1px solid var(--warn);background:rgba(212,162,76,.08)"><div style="font-size:12.5px;color:var(--ink2)">
       ⚠️ هذا الجرد بحالة مسودة ولم يُرحَّل محاسبياً بعد. عند الترحيل سيُنشأ قيد تسوية تلقائي بفروقات العجز/الزيادة، وسيُحدَّث الرصيد الفعلي للمواد بهذا المخزن. يتطلب ضبط حسابات الجرد مسبقاً من صفحة "المستخدمون والصلاحيات".</div></div>` : ''}
@@ -806,6 +830,16 @@ window.exportPhysCountExcel = async (countId) => {
       'السعر': it.unit_price, 'قيمة الفرق': (Number(it.counted_qty)-Number(it.system_qty))*it.unit_price })),
     'الجرد الدوري', `الجرد_الدوري_${todayISO()}.xlsx`
   );
+};
+// حذف عملية جرد كاملة — مدير النظام فقط
+window.deletePhysCountConfirm = async (countId, countNo, wasPosted) => {
+  const extra = wasPosted ? '\n\n⚠️ هذا الجرد "مُرحَّل" — حذفه هنا لن يعكس قيد التسوية المحاسبي الذي أنشأه تلقائياً. احذف القيد المرتبط يدوياً من صفحة "القيود المحاسبية" إن أردت عكس الأثر بالكامل.' : '';
+  if (!confirm(`⚠️ حذف نهائي لعملية الجرد "${countNo}".${extra}\n\nمتابعة؟`)) return;
+  try {
+    await DB.deletePhysicalCount(countId, countNo);
+    toast('تم حذف عملية الجرد', 's');
+    PAGE_RENDER.physcount(document.getElementById('page-root'), 'list');
+  } catch (e) { toast('تعذر الحذف: ' + e.message, 'e'); }
 };
 window.postPhysCountConfirm = async (countId) => {
   if (!confirm('سيتم ترحيل الجرد وإنشاء قيد تسوية محاسبي بفروقات العجز/الزيادة، وتحديث الرصيد الفعلي للمواد. هذا الإجراء لا يمكن التراجع عنه. متابعة؟')) return;
