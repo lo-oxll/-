@@ -23,6 +23,7 @@ PAGE_RENDER.coa = async (root) => {
         ${canEdit ? `<td>
           <button class="btn btn-o btn-sm" onclick='openAccModal(${JSON.stringify(a).replace(/'/g,"&#39;")})'>تعديل</button>
           <button class="btn btn-d btn-sm" onclick="deleteAccountConfirm('${a.id}','${a.code}','${(a.name||'').replace(/'/g,"\\'")}')">حذف</button>
+          ${can('admin') ? `<button class="btn btn-d btn-sm" onclick="forceDeleteAccountConfirm('${a.id}','${a.code}','${(a.name||'').replace(/'/g,"\\'")}')">🗑 حذف إجباري</button>` : ''}
         </td>` : ''}
       </tr>`).join('') || `<tr><td colspan="${canEdit?5:4}" class="ec">لا توجد حسابات</td></tr>`}
     </tbody></table></div></div>
@@ -118,6 +119,19 @@ window.deleteAccountConfirm = async (id, code, name) => {
   } catch (e) { toast('تعذّر الحذف: ' + e.message, 'e'); }
 };
 
+// حذف إجباري لحساب حتى لو له قيود سابقة — مدير النظام فقط.
+// ⚠️ يحذف كل سطور القيود الخاصة بهذا الحساب فقط، ما يجعل القيود المرتبطة
+// (بأطرافها الأخرى) غير متوازنة محاسبياً. يتطلب كتابة رمز الحساب للتأكيد.
+window.forceDeleteAccountConfirm = async (id, code, name) => {
+  const typed = prompt(`⚠️ حذف إجباري خطير للحساب "${code} — ${name}"!\n\nسيُحذف كل قيد محاسبي مرتبط بهذا الحساب (سطره فقط)، ما قد يجعل قيوداً أخرى غير متوازنة ويشوّه التقارير المالية للفترات السابقة. لا يمكن التراجع عن هذا الإجراء.\n\nللتأكيد، اكتب رمز الحساب "${code}" بالضبط:`);
+  if (typed !== code) { if (typed !== null) toast('لم يتطابق الرمز — تم إلغاء الحذف', 'e'); return; }
+  try {
+    await DB.forceDeleteAccount(id, code);
+    toast('تم الحذف الإجباري للحساب', 's');
+    go('coa');
+  } catch (e) { toast('تعذّر الحذف: ' + e.message, 'e'); }
+};
+
 window.openAccModal = (a = null) => {
   showModal(a ? 'تعديل حساب' : 'إضافة حساب جديد', `
     <div class="fg2" style="margin-bottom:10px">
@@ -178,7 +192,10 @@ function renderJournalPage(root, st) {
         ${can('admin','central_accountant') ? '<button class="btn btn-p" onclick="openJournalModal()">+ قيد يدوي</button>' : ''}
       </div></div>
     ${entries.map(e => `<div class="card">
-      <div class="card-title">${e.entry_no} — ${e.entry_date} — <span class="chip">${JOURNAL_REF_LABEL[e.ref_type] || 'يدوي'}</span></div>
+      <div class="ph" style="margin:0 0 4px">
+        <div class="card-title" style="margin:0;padding:0;border:none">${e.entry_no} — ${e.entry_date} — <span class="chip">${JOURNAL_REF_LABEL[e.ref_type] || 'يدوي'}</span></div>
+        ${can('admin') ? `<div class="ph-actions"><button class="btn btn-d btn-sm" onclick="deleteJournalEntryConfirm('${e.id}','${(e.entry_no||'').replace(/'/g,"\\'")}','${e.ref_type||'manual'}')">🗑 حذف القيد</button></div>` : ''}
+      </div>
       <div style="font-size:12.5px;color:var(--ink2);margin-bottom:10px">${e.description || ''}</div>
       <div class="itw"><table><thead><tr><th>الحساب</th><th>مدين (د.ع)</th><th>دائن (د.ع)</th></tr></thead><tbody>
         ${(e.journal_lines||[]).map(l => `<tr><td>${l.chart_of_accounts?.code} — ${l.chart_of_accounts?.name}</td><td class="mono">${l.debit ? fmt(l.debit) : '—'}</td><td class="mono">${l.credit ? fmt(l.credit) : '—'}</td></tr>`).join('')}
@@ -207,6 +224,20 @@ window.exportJournalExcel = async () => {
     });
   });
   exportRowsToExcel(rows, 'القيود المحاسبية', `القيود_المحاسبية_${todayISO()}.xlsx`);
+};
+
+// حذف قيد محاسبي كامل — مدير النظام فقط
+window.deleteJournalEntryConfirm = async (id, entryNo, refType) => {
+  const auto = refType !== 'manual';
+  const extra = auto
+    ? `\n\n⚠️ هذا القيد أُنشئ تلقائياً (${JOURNAL_REF_LABEL[refType] || refType}) — حذفه هنا لا يعكس أثره الأصلي على المخزون/الصندوق/الرواتب. للعكس الآمن الكامل استخدم "حذف الوثيقة" أو الإجراء المقابل بدلاً من حذف القيد مباشرة.`
+    : '';
+  if (!confirm(`⚠️ حذف نهائي للقيد "${entryNo}" بكل سطوره. سيكسر توازن ميزان المراجعة إن لم تُعالج بقية الأطراف المرتبطة.${extra}\n\nمتابعة؟`)) return;
+  try {
+    await DB.deleteJournalEntry(id, entryNo);
+    toast('تم حذف القيد', 's');
+    go('journal');
+  } catch (e) { toast('تعذّر الحذف: ' + e.message, 'e'); }
 };
 
 window.openJournalModal = async () => {
