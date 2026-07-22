@@ -77,6 +77,7 @@ const PAGES = [
   ]},
   { section: 'السلفة المستديمة', items: [
     { id: 'pettycash', label: 'سندات الصرف', icon: '🧾', roles: ['admin','central_accountant','manager','auditor'] },
+    { id: 'pettycashfund', label: 'قائمة السلفة', icon: '📒', roles: ['admin','central_accountant','manager','auditor'] },
   ]},
   { section: 'الإدارة', items: [
     { id: 'fiscal', label: 'السنوات المالية', icon: '📅', roles: ['admin','manager'] },
