@@ -52,6 +52,13 @@ const DB = {
     if (error) throw error;
     await this.log('reject_user', 'profiles', id, {});
   },
+  // حذف نهائي لملف مستخدم فعّال (مدير النظام فقط عبر RLS) — حساب الدخول
+  // نفسه بخدمة المصادقة يبقى ويحتاج حذفاً يدوياً من لوحة Supabase
+  async hardDeleteUser(id, name) {
+    const { error } = await sb.from('profiles').delete().eq('id', id);
+    if (error) throw friendlyDbError(error);
+    await this.log('hard_delete_user', 'profiles', id, { name });
+  },
 
   // ── مخازن ─────────────────────────────
   async listWarehouses() {
@@ -80,6 +87,16 @@ const DB = {
     if (error) throw error;
     await this.log('delete_warehouse', 'warehouses', id, {});
   },
+  // حذف نهائي (Hard Delete) — مدير النظام فقط. يحذف صفوف الرصيد الخاصة بهذا
+  // المخزن أولاً؛ إن كان له وثائق استلام/إصدار تاريخية سيُرفض الحذف تلقائياً
+  // من قيد FID بقاعدة البيانات لحماية السجل التاريخي (هذا سلوك مقصود وآمن)
+  async hardDeleteWarehouse(id, name) {
+    const { error: e1 } = await sb.from('material_stock').delete().eq('warehouse_id', id);
+    if (e1) throw friendlyDbError(e1);
+    const { error } = await sb.from('warehouses').delete().eq('id', id);
+    if (error) throw friendlyDbError(error);
+    await this.log('hard_delete_warehouse', 'warehouses', id, { name });
+  },
 
   // ── دليل المواد ─────────────────────────────
   // offset/limit تدعم "تحميل المزيد" (pagination) بدل جلب كل السجلات دفعة واحدة
@@ -96,6 +113,13 @@ const DB = {
     await this.log(before ? 'update_material' : 'create_material', 'materials', data.id,
       before ? { old: { name: before.name, unit: before.unit, category: before.category, min_qty: before.min_qty }, new: m } : { new: m });
     return data;
+  },
+  // حذف نهائي لمادة — مدير النظام فقط. يُرفض تلقائياً لو للمادة رصيد أو
+  // استخدام سابق بوثائق استلام/إصدار أو أرصدة افتتاحية (حماية من قاعدة البيانات)
+  async deleteMaterial(id, storeNum) {
+    const { error } = await sb.from('materials').delete().eq('id', id);
+    if (error) throw friendlyDbError(error);
+    await this.log('delete_material', 'materials', id, { store_num: storeNum });
   },
 
   // ── الأرصدة والسعر الوسطي ─────────────────────────────
@@ -282,6 +306,14 @@ const DB = {
     if (error) throw friendlyDbError(error);
     await this.log('delete_account', 'chart_of_accounts', id, {});
   },
+  // حذف نهائي/إجباري لحساب حتى لو له قيود سابقة — مدير النظام فقط.
+  // ⚠️ يحذف كل سطور القيود الخاصة بهذا الحساب، ما قد يكسر توازن قيود
+  // مرتبطة. استخدمه بحذر شديد (راجع تنبيه الواجهة قبل الاستدعاء).
+  async forceDeleteAccount(id, code) {
+    const { error } = await sb.rpc('fn_admin_force_delete_account', { p_account_id: id });
+    if (error) throw friendlyDbError(error);
+    await this.log('force_delete_account', 'chart_of_accounts', id, { code });
+  },
   async trialBalance() {
     const { data, error } = await sb.from('v_trial_balance').select('*');
     if (error) throw error; return data;
@@ -303,6 +335,15 @@ const DB = {
     await this.log('post_journal', 'journal_entries', je.id, { entry_no: entry.entry_no });
     return je;
   },
+  // حذف قيد محاسبي كامل (رأس + سطور) — مدير النظام فقط.
+  // ⚠️ لو القيد ناتج تلقائياً عن وثيقة استلام/إصدار أو تسوية جرد أو راتب،
+  // حذفه هنا لا يعكس أثره على المخزون/الصندوق — استخدم "حذف الوثيقة" أو
+  // إلغاء العملية الأصلية لو أردت عكساً كاملاً وآمناً للأثر.
+  async deleteJournalEntry(id, entryNo) {
+    const { error } = await sb.rpc('fn_admin_delete_journal_entry', { p_entry_id: id });
+    if (error) throw friendlyDbError(error);
+    await this.log('delete_journal_entry', 'journal_entries', id, { entry_no: entryNo });
+  },
 
   // ── السنوات المالية ─────────────────────────────
   async listFiscalYears() {
@@ -322,6 +363,16 @@ const DB = {
   async openingBalances(fiscalYearId) {
     const { data, error } = await sb.from('v_opening_balances').select('*').eq('fiscal_year_id', fiscalYearId).order('seq');
     if (error) throw error; return data;
+  },
+  // حذف سنة مالية مؤرشفة (غير نشطة) — مدير النظام فقط. يُرفض تلقائياً
+  // لو للسنة وثائق استلام/إصدار أو أرصدة افتتاحية مسجّلة (حماية FK)
+  async deleteFiscalYear(id, year, isActive) {
+    if (isActive) throw new Error('لا يمكن حذف السنة المالية النشطة حالياً');
+    const { error: e1 } = await sb.from('opening_balances').delete().eq('fiscal_year_id', id);
+    if (e1) throw friendlyDbError(e1);
+    const { error } = await sb.from('fiscal_years').delete().eq('id', id);
+    if (error) throw friendlyDbError(error);
+    await this.log('delete_fiscal_year', 'fiscal_years', id, { year });
   },
 
   // ── الجرد الدوري (Physical Count) ─────────────────────────────
@@ -346,6 +397,16 @@ const DB = {
     const { error } = await sb.rpc('fn_post_physical_count_journal', { p_count_id: countId });
     if (error) throw error;
     await this.log('post_physical_count', 'physical_counts', countId, {});
+  },
+  // حذف عملية جرد كاملة — مدير النظام فقط. لو كانت "مُرحَّلة" فإن قيد
+  // التسوية المحاسبي الناتج عنها لا يُحذف تلقائياً (احذفه يدوياً من صفحة
+  // القيود المحاسبية إن أردت عكس أثره بالكامل)
+  async deletePhysicalCount(id, countNo) {
+    const { error: e1 } = await sb.from('count_items').delete().eq('count_id', id);
+    if (e1) throw friendlyDbError(e1);
+    const { error } = await sb.from('physical_counts').delete().eq('id', id);
+    if (error) throw friendlyDbError(error);
+    await this.log('delete_physical_count', 'physical_counts', id, { count_no: countNo });
   },
 
   // ── إعدادات النظام (مفتاح/قيمة) — تُستخدم لضبط حسابات فروقات الجرد ─────────────────────────────
