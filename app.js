@@ -68,6 +68,9 @@ const PAGES = [
     { id: 'journal', label: 'القيود المحاسبية', icon: '🧾' },
     { id: 'reports', label: 'التقارير المالية', icon: '📈' },
   ]},
+  { section: 'إدارة الموظفين', items: [
+    { id: 'employees', label: 'الموظفون', icon: '🪪', roles: ['admin','central_accountant'] },
+  ]},
   { section: 'الخزينة والرواتب', items: [
     { id: 'cashbox', label: 'صندوق المركز', icon: '💰', roles: ['admin','central_accountant'] },
     { id: 'payroll', label: 'الرواتب', icon: '🧑‍💼', roles: ['admin','central_accountant'] },
