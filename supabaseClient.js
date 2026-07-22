@@ -601,6 +601,53 @@ const DB = {
     await this.log('delete_payroll_run', 'payroll_runs', id, { period });
   },
 
+  // ── السلفة المستديمة (Petty Cash) ─────────────────────────────
+  async listPettyCashVouchers(limit = 200) {
+    const { data, error } = await sb.from('petty_cash_vouchers').select('*').order('seq_no', { ascending: false }).limit(limit);
+    if (error) throw error; return data;
+  },
+  async getPettyCashVoucher(id) {
+    const { data, error } = await sb.from('petty_cash_vouchers').select('*').eq('id', id).single();
+    if (error) throw error; return data;
+  },
+  async pettyCashItems(voucherId) {
+    const { data, error } = await sb.from('petty_cash_items')
+      .select('*, materials(store_num,name), warehouses(code,name), chart_of_accounts(code,name)')
+      .eq('voucher_id', voucherId).order('line_no');
+    if (error) throw error; return data;
+  },
+  // إنشاء سند صرف من السلفة المستديمة وترحيله فوراً (رأس + أصناف + قيد محاسبي)
+  async createPettyCashVoucher(header, items) {
+    const session = await this.currentSession();
+    const { data: v, error: e1 } = await sb.from('petty_cash_vouchers').insert({ ...header, created_by: session?.user?.id }).select().single();
+    if (e1) throw friendlyDbError(e1);
+    const rows = items.map((it, i) => ({ ...it, voucher_id: v.id, line_no: i + 1 }));
+    const { error: e2 } = await sb.from('petty_cash_items').insert(rows);
+    if (e2) throw friendlyDbError(e2);
+    const { error: e3 } = await sb.rpc('fn_post_petty_cash_voucher', { p_voucher_id: v.id });
+    if (e3) throw friendlyDbError(e3);
+    await this.log('create_petty_cash_voucher', 'petty_cash_vouchers', v.id, { doc_num: header.doc_num, items: items.length });
+    return v;
+  },
+  // إلغاء سند (مدير النظام فقط) — يعكس أثر المخزون ويحذف القيد المرتبط
+  async cancelPettyCashVoucher(id, docNum) {
+    const { error } = await sb.rpc('fn_cancel_petty_cash_voucher', { p_voucher_id: id });
+    if (error) throw friendlyDbError(error);
+    await this.log('cancel_petty_cash_voucher', 'petty_cash_vouchers', id, { doc_num: docNum });
+  },
+  // حذف نهائي لسند (مدير النظام فقط) — استخدم "إلغاء" عادةً؛ هذا يمحو السند نهائياً من السجل
+  async deletePettyCashVoucher(id, docNum, journalEntryId) {
+    if (journalEntryId) {
+      const { error: eJ } = await sb.rpc('fn_admin_delete_journal_entry', { p_entry_id: journalEntryId });
+      if (eJ) throw friendlyDbError(eJ);
+    }
+    const { error: e1 } = await sb.from('petty_cash_items').delete().eq('voucher_id', id);
+    if (e1) throw friendlyDbError(e1);
+    const { error } = await sb.from('petty_cash_vouchers').delete().eq('id', id);
+    if (error) throw friendlyDbError(error);
+    await this.log('delete_petty_cash_voucher', 'petty_cash_vouchers', id, { doc_num: docNum });
+  },
+
   // ── سجل المراجعة ─────────────────────────────
   async log(action, entity, entity_id, details = {}) {
     const session = await this.currentSession();
