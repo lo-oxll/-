@@ -35,7 +35,10 @@ PAGE_RENDER.users = async (root) => {
           ${['admin','accountant','central_accountant','manager','auditor'].map(r => `<option value="${r}" ${u.role===r?'selected':''}>${ROLE_LABEL[r]}</option>`).join('')}
         </select>` : `<span class="chip">${ROLE_LABEL[u.role] || u.role}</span>`}</td>
         <td>${u.is_active ? '<span class="chip-ok chip">فعّال</span>' : '<span class="chip-danger chip">موقوف</span>'}</td>
-        ${isAdmin ? `<td><button class="btn btn-o btn-sm" onclick="toggleActive('${u.id}', ${!u.is_active})">${u.is_active?'إيقاف':'تفعيل'}</button></td>` : ''}
+        ${isAdmin ? `<td>
+          <button class="btn btn-o btn-sm" onclick="toggleActive('${u.id}', ${!u.is_active})">${u.is_active?'إيقاف':'تفعيل'}</button>
+          ${u.id !== ME.id ? `<button class="btn btn-d btn-sm" onclick="hardDeleteUserConfirm('${u.id}','${(u.full_name||'').replace(/'/g,"\\'")}')">🗑 حذف نهائي</button>` : ''}
+        </td>` : ''}
       </tr>`).join('')}
     </tbody></table></div></div>
 
@@ -70,6 +73,15 @@ window.toggleActive = async (id, val) => {
   if (error) { toast('خطأ: ' + error.message, 'e'); return; }
   await DB.log(val ? 'activate_user' : 'deactivate_user', 'profiles', id, { old: { is_active: !val }, new: { is_active: val } });
   go('users');
+};
+// حذف نهائي لملف مستخدم فعّال — مدير النظام فقط. لا يمكن حذف حسابك الخاص.
+window.hardDeleteUserConfirm = async (id, name) => {
+  if (!confirm(`⚠️ حذف نهائي لملف المستخدم "${name}" من النظام. هذا الإجراء لا يمكن التراجع عنه (حساب الدخول نفسه يبقى بخدمة المصادقة ويحتاج حذفاً يدوياً من لوحة Supabase لو أردت). متابعة؟`)) return;
+  try {
+    await DB.hardDeleteUser(id, name);
+    toast('تم حذف المستخدم نهائياً', 's');
+    go('users');
+  } catch (e) { toast('تعذّر الحذف: ' + e.message, 'e'); }
 };
 
 // ── إعدادات حسابات فروقات الجرد الدوري (تُستخدم عند ترحيل قيد الجرد) ──────────────────────────────
