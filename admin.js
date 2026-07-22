@@ -88,10 +88,10 @@ window.hardDeleteUserConfirm = async (id, name) => {
 async function renderCountSettingsCard() {
   const accs = await DB.chartOfAccounts();
   const opts = (selected) => `<option value="">— اختر حساب —</option>` + accs.map(a => `<option value="${a.id}" ${a.id===selected?'selected':''}>${a.code} — ${a.name}</option>`).join('');
-  const [inv, short, surplus, cashbox, salExp, salPay, logoUrl, footerTxt] = await Promise.all([
+  const [inv, short, surplus, cashbox, salExp, salPay, logoUrl, footerTxt, pettyCash] = await Promise.all([
     DB.getSetting('inventory_account_id'), DB.getSetting('inventory_shortage_account_id'), DB.getSetting('inventory_surplus_account_id'),
     DB.getSetting('cashbox_account_id'), DB.getSetting('salary_expense_account_id'), DB.getSetting('salary_payment_account_id'),
-    DB.getSetting('print_logo_url'), DB.getSetting('print_footer_text'),
+    DB.getSetting('print_logo_url'), DB.getSetting('print_footer_text'), DB.getSetting('petty_cash_account_id'),
   ]);
   return `
     <div class="card" style="border:1px dashed var(--border)">
@@ -103,6 +103,16 @@ async function renderCountSettingsCard() {
       </div>
       <button class="btn btn-p btn-sm" id="cs-save3">💾 حفظ إعدادات الطباعة</button>
       <div id="cs-msg3" style="margin-top:8px;font-size:12px"></div>
+    </div>
+
+    <div class="card" style="border:1px dashed var(--border)">
+      <div class="card-title">💵 إعدادات السلفة المستديمة (Petty Cash)</div>
+      <div style="font-size:12px;color:var(--ink3);margin-bottom:14px">يُستخدم هذا الحساب كطرف دائن تلقائياً بكل سند صرف من السلفة المستديمة يُنشئه محاسب المركز.</div>
+      <div class="fg2" style="margin-bottom:10px">
+        <div class="fgroup s2"><label>حساب السلفة المستديمة</label><select id="cs-pettycash">${opts(pettyCash)}</select></div>
+      </div>
+      <button class="btn btn-p btn-sm" id="cs-save4">💾 حفظ إعداد السلفة المستديمة</button>
+      <div id="cs-msg4" style="margin-top:8px;font-size:12px"></div>
     </div>
 
     <div class="card" style="border:1px dashed var(--border)">
@@ -139,6 +149,16 @@ function bindCountSettingsHandlers() {
       ]);
       document.getElementById('cs-msg3').innerHTML = '<span style="color:var(--ok)">✓ تم حفظ إعدادات الطباعة</span>';
       toast('تم حفظ إعدادات الطباعة', 's');
+    } catch (e) { toast('خطأ: ' + e.message, 'e'); }
+  };
+  const btn4 = document.getElementById('cs-save4');
+  if (btn4) btn4.onclick = async () => {
+    const pc = gv('cs-pettycash');
+    if (!pc) { toast('اختر حساب السلفة المستديمة قبل الحفظ', 'e'); return; }
+    try {
+      await DB.setSetting('petty_cash_account_id', pc);
+      document.getElementById('cs-msg4').innerHTML = '<span style="color:var(--ok)">✓ تم حفظ إعداد السلفة المستديمة</span>';
+      toast('تم حفظ إعداد السلفة المستديمة', 's');
     } catch (e) { toast('خطأ: ' + e.message, 'e'); }
   };
   const btn = document.getElementById('cs-save');
