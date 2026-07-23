@@ -23,6 +23,7 @@ PAGE_RENDER.coa = async (root) => {
         ${canEdit ? `<td>
           <button class="btn btn-o btn-sm" onclick='openAccModal(${JSON.stringify(a).replace(/'/g,"&#39;")})'>تعديل</button>
           <button class="btn btn-d btn-sm" onclick="deleteAccountConfirm('${a.id}','${a.code}','${(a.name||'').replace(/'/g,"\\'")}')">حذف</button>
+          ${can('admin') ? `<button class="btn btn-d btn-sm" onclick="forceDeleteAccountConfirm('${a.id}','${a.code}','${(a.name||'').replace(/'/g,"\\'")}')">🗑 حذف إجباري</button>` : ''}
         </td>` : ''}
       </tr>`).join('') || `<tr><td colspan="${canEdit?5:4}" class="ec">لا توجد حسابات</td></tr>`}
     </tbody></table></div></div>
@@ -63,11 +64,8 @@ window.importCoaExcelFile = async (file) => {
     if (!raw.length) { toast('الملف فارغ', 'e'); return; }
 
     const rows = raw.map(r => {
-      // تطبيع أسماء الأعمدة: إزالة الفراغات الزائدة، وقبول عدة تسميات شائعة لنفس العمود
-      const norm = {};
-      Object.keys(r).forEach(k => { norm[k.trim()] = r[k]; });
-      const code = String(norm['الرقم الحساب'] ?? norm['رمز الحساب'] ?? norm['الرمز'] ?? norm['رقم الحساب'] ?? norm['code'] ?? '').trim();
-      const name = String(norm['الاسم الحساب'] ?? norm['اسم الحساب'] ?? norm['الاسم'] ?? norm['name'] ?? '').trim();
+      const code = String(r['رمز الحساب'] ?? r['الرمز'] ?? r['code'] ?? '').trim();
+      const name = String(r['اسم الحساب'] ?? r['الاسم'] ?? r['name'] ?? '').trim();
       return { code, name, type: inferAccountType(code) };
     }).filter(r => r.code && r.name);
 
@@ -117,6 +115,19 @@ window.deleteAccountConfirm = async (id, code, name) => {
   try {
     await DB.deleteAccount(id);
     toast('تم حذف الحساب', 's');
+    go('coa');
+  } catch (e) { toast('تعذّر الحذف: ' + e.message, 'e'); }
+};
+
+// حذف إجباري لحساب حتى لو له قيود سابقة — مدير النظام فقط.
+// ⚠️ يحذف كل سطور القيود الخاصة بهذا الحساب فقط، ما يجعل القيود المرتبطة
+// (بأطرافها الأخرى) غير متوازنة محاسبياً. يتطلب كتابة رمز الحساب للتأكيد.
+window.forceDeleteAccountConfirm = async (id, code, name) => {
+  const typed = prompt(`⚠️ حذف إجباري خطير للحساب "${code} — ${name}"!\n\nسيُحذف كل قيد محاسبي مرتبط بهذا الحساب (سطره فقط)، ما قد يجعل قيوداً أخرى غير متوازنة ويشوّه التقارير المالية للفترات السابقة. لا يمكن التراجع عن هذا الإجراء.\n\nللتأكيد، اكتب رمز الحساب "${code}" بالضبط:`);
+  if (typed !== code) { if (typed !== null) toast('لم يتطابق الرمز — تم إلغاء الحذف', 'e'); return; }
+  try {
+    await DB.forceDeleteAccount(id, code);
+    toast('تم الحذف الإجباري للحساب', 's');
     go('coa');
   } catch (e) { toast('تعذّر الحذف: ' + e.message, 'e'); }
 };
@@ -178,10 +189,14 @@ function renderJournalPage(root, st) {
     <div class="ph"><div><div class="ph-title">القيود المحاسبية</div><div class="ph-sub">تُنشأ تلقائياً من وثائق الاستلام/الإصدار، أو يدوياً — ${entries.length} قيد محمّل${st.hasMore ? ' (يوجد المزيد)' : ''}</div></div>
       <div class="ph-actions">
         <button class="btn btn-o btn-sm" onclick="exportJournalExcel()">⬇ تصدير إكسل (حتى 1000 قيد)</button>
+        ${can('admin') ? `<button class="btn btn-o btn-sm" onclick="go('approvals')">📨 طلبات الموافقة</button>` : ''}
         ${can('admin','central_accountant') ? '<button class="btn btn-p" onclick="openJournalModal()">+ قيد يدوي</button>' : ''}
       </div></div>
     ${entries.map(e => `<div class="card">
-      <div class="card-title">${e.entry_no} — ${e.entry_date} — <span class="chip">${JOURNAL_REF_LABEL[e.ref_type] || 'يدوي'}</span></div>
+      <div class="ph" style="margin:0 0 4px">
+        <div class="card-title" style="margin:0;padding:0;border:none">${e.entry_no} — ${e.entry_date} — <span class="chip">${JOURNAL_REF_LABEL[e.ref_type] || 'يدوي'}</span></div>
+        ${can('admin') ? `<div class="ph-actions"><button class="btn btn-d btn-sm" onclick="deleteJournalEntryConfirm('${e.id}','${(e.entry_no||'').replace(/'/g,"\\'")}','${e.ref_type||'manual'}')">🗑 حذف القيد</button></div>` : ''}
+      </div>
       <div style="font-size:12.5px;color:var(--ink2);margin-bottom:10px">${e.description || ''}</div>
       <div class="itw"><table><thead><tr><th>الحساب</th><th>مدين (د.ع)</th><th>دائن (د.ع)</th></tr></thead><tbody>
         ${(e.journal_lines||[]).map(l => `<tr><td>${l.chart_of_accounts?.code} — ${l.chart_of_accounts?.name}</td><td class="mono">${l.debit ? fmt(l.debit) : '—'}</td><td class="mono">${l.credit ? fmt(l.credit) : '—'}</td></tr>`).join('')}
@@ -212,6 +227,20 @@ window.exportJournalExcel = async () => {
   exportRowsToExcel(rows, 'القيود المحاسبية', `القيود_المحاسبية_${todayISO()}.xlsx`);
 };
 
+// حذف قيد محاسبي كامل — مدير النظام فقط
+window.deleteJournalEntryConfirm = async (id, entryNo, refType) => {
+  const auto = refType !== 'manual';
+  const extra = auto
+    ? `\n\n⚠️ هذا القيد أُنشئ تلقائياً (${JOURNAL_REF_LABEL[refType] || refType}) — حذفه هنا لا يعكس أثره الأصلي على المخزون/الصندوق/الرواتب. للعكس الآمن الكامل استخدم "حذف الوثيقة" أو الإجراء المقابل بدلاً من حذف القيد مباشرة.`
+    : '';
+  if (!confirm(`⚠️ حذف نهائي للقيد "${entryNo}" بكل سطوره. سيكسر توازن ميزان المراجعة إن لم تُعالج بقية الأطراف المرتبطة.${extra}\n\nمتابعة؟`)) return;
+  try {
+    await DB.deleteJournalEntry(id, entryNo);
+    toast('تم حذف القيد', 's');
+    go('journal');
+  } catch (e) { toast('تعذّر الحذف: ' + e.message, 'e'); }
+};
+
 window.openJournalModal = async () => {
   const accs = await DB.chartOfAccounts();
   const opts = accs.map(a => `<option value="${a.id}">${a.code} — ${a.name}</option>`).join('');
@@ -231,7 +260,14 @@ window.openJournalModal = async () => {
     });
     const desc = gv('m-je-desc');
     if (!desc || lines.length < 2) { toast('أدخل الوصف وسطرين على الأقل', 'e'); return false; }
+    const total = lines.reduce((s, l) => s + Number(l.debit || 0), 0);
     try {
+      const threshold = Number(await DB.getSetting('approval_threshold_amount')) || 0;
+      if (threshold > 0 && total >= threshold && !can('admin')) {
+        await DB.createPendingEntry({ entry_date: gv('m-je-date'), description: desc }, lines);
+        toast(`📨 المبلغ ${fmt(total)} يتجاوز حد الموافقة (${fmt(threshold)}) — أُرسل القيد لمدير النظام للموافقة قبل الترحيل`, 'i');
+        go('journal'); return true;
+      }
       await DB.postManualEntry({ entry_no: 'JE-MAN-' + Date.now().toString().slice(-8), entry_date: gv('m-je-date'), ref_type: 'manual', description: desc, created_by: ME.id }, lines);
       toast('تم ترحيل القيد', 's'); go('journal'); return true;
     } catch (e) { toast(e.message, 'e'); return false; }
@@ -246,4 +282,41 @@ window.openJournalModal = async () => {
     el.style.color = d === c ? 'var(--ok)' : 'var(--danger)';
   };
   addJeLine(); addJeLine();
+};
+
+// ══════════════════════════════════════════════════════════════════
+//  طلبات الموافقة على القيود اليدوية الكبيرة (Maker-Checker)
+//  محاسب المركز يُنشئ قيداً يتجاوز حد الموافقة → يُحفظ "معلَّق" → مدير
+//  النظام يوافق (يُرحَّل فعلياً) أو يرفض (مع سبب).
+// ══════════════════════════════════════════════════════════════════
+PAGE_RENDER.approvals = async (root) => {
+  if (!can('admin')) { root.innerHTML = '<div class="card ec">لا تملك صلاحية الوصول لهذه الصفحة</div>'; return; }
+  const [pending, accs] = await Promise.all([DB.listPendingEntries('pending'), DB.chartOfAccounts()]);
+  const accMap = Object.fromEntries(accs.map(a => [a.id, `${a.code} — ${a.name}`]));
+  root.innerHTML = `
+    <div class="ph"><div><div class="ph-title">📨 طلبات الموافقة على القيود</div><div class="ph-sub">قيود يدوية تجاوزت حد الموافقة المضبوط — بانتظار مصادقة مدير النظام قبل الترحيل الفعلي</div></div>
+      <div class="ph-actions"><button class="btn btn-o" onclick="go('journal')">◀ القيود المحاسبية</button></div></div>
+    ${pending.map(p => `<div class="card">
+      <div class="ph" style="margin:0 0 8px"><div><div class="card-title" style="margin:0;padding:0;border:none">${p.entry_date} — بواسطة ${p.requester?.full_name || '—'}</div>
+        <div style="font-size:12.5px;color:var(--ink2);margin-top:4px">${p.description || ''}</div></div>
+        <div class="ph-actions">
+          <button class="btn btn-s btn-sm" onclick="approveEntryConfirm('${p.id}')">✅ موافقة وترحيل</button>
+          <button class="btn btn-d btn-sm" onclick="rejectEntryConfirm('${p.id}')">❌ رفض</button>
+        </div></div>
+      <div class="itw"><table><thead><tr><th>الحساب</th><th>مدين</th><th>دائن</th></tr></thead><tbody>
+        ${p.lines.map(l => `<tr><td>${accMap[l.account_id] || l.account_id}</td><td class="mono">${l.debit ? fmt(l.debit) : '—'}</td><td class="mono">${l.credit ? fmt(l.credit) : '—'}</td></tr>`).join('')}
+      </tbody></table></div>
+      <div class="grand-bar" style="margin-top:10px"><span class="grand-lbl">إجمالي القيد</span><span class="grand-val">${fmt(p.total_amount)}</span></div>
+    </div>`).join('') || '<div class="card ec">لا توجد طلبات موافقة معلّقة حالياً 🎉</div>'}
+  `;
+};
+window.approveEntryConfirm = async (id) => {
+  if (!confirm('سيتم ترحيل هذا القيد فعلياً بحسابات المستخدم مقدّم الطلب. متابعة؟')) return;
+  try { await DB.approvePendingEntry(id); toast('✅ تمت الموافقة والترحيل', 's'); go('approvals'); }
+  catch (e) { toast('خطأ: ' + e.message, 'e'); }
+};
+window.rejectEntryConfirm = async (id) => {
+  const note = prompt('سبب الرفض (اختياري):') || null;
+  try { await DB.rejectPendingEntry(id, note); toast('تم رفض الطلب', 's'); go('approvals'); }
+  catch (e) { toast('خطأ: ' + e.message, 'e'); }
 };
