@@ -8,11 +8,11 @@
 // ══════════════════════════════════════════════════════════════════
 
 PAGE_RENDER.pettycash = async (root, mode = 'list', voucherId = null) => {
-  if (!can('admin','central_accountant','manager','auditor')) { root.innerHTML = '<div class="card ec">لا تملك صلاحية الوصول لهذه الصفحة</div>'; return; }
+  if (!can('admin','manager','auditor','accountant')) { root.innerHTML = '<div class="card ec">لا تملك صلاحية الوصول لهذه الصفحة</div>'; return; }
   if (mode === 'new') return renderPettyCashForm(root);
   if (mode === 'view') return renderPettyCashView(root, voucherId);
 
-  const canWrite = can('admin','central_accountant');
+  const canWrite = canTreasury();
   const vouchers = await DB.listPettyCashVouchers();
   root.innerHTML = `
     <div class="ph"><div><div class="ph-title">🧾 السلفة المستديمة — سندات الصرف</div><div class="ph-sub">كل سند يُرحَّل فوراً بقيد محاسبي: مدين حساب المخزون (للمواد) و/أو حسابات المصروفات (للبنود غير المخزنية)، ودائن حساب السلفة المستديمة</div></div>
@@ -290,9 +290,9 @@ window.printPettyCash = async (id) => {
 //  قائمة السلفة — سجل تغذية صندوق العهدة + الرصيد المتبقي
 // ════════════════════════════════════════════════════════════════
 PAGE_RENDER.pettycashfund = async (root) => {
-  if (!can('admin','central_accountant','manager','auditor')) { root.innerHTML = '<div class="card ec">لا تملك صلاحية الوصول لهذه الصفحة</div>'; return; }
+  if (!can('admin','manager','auditor','accountant')) { root.innerHTML = '<div class="card ec">لا تملك صلاحية الوصول لهذه الصفحة</div>'; return; }
   const [fund, advances, accs] = await Promise.all([DB.pettyCashFundBalance(), DB.listPettyCashAdvances(), DB.chartOfAccounts()]);
-  const canWrite = can('admin','central_accountant');
+  const canWrite = canTreasury();
   root.innerHTML = `
     <div class="ph"><div><div class="ph-title">📒 قائمة السلفة المستديمة</div><div class="ph-sub">سجل تغذية صندوق العهدة (النقل إليه من الصندوق المركزي/البنك) مقابل إجمالي ما صُرف بسندات الصرف</div></div>
       <div class="ph-actions">
