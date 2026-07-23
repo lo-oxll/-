@@ -12,7 +12,7 @@ const PAYROLL_DEFAULTS = { ssRate: 0.035, subscription: 3500, healthPerMember: 3
 //  إدارة الموظفين
 // ════════════════════════════════════════════════════════════════
 PAGE_RENDER.employees = async (root) => {
-  if (!can('admin','central_accountant')) { root.innerHTML = '<div class="card ec">لا تملك صلاحية الوصول لهذه الصفحة</div>'; return; }
+  if (!canTreasury()) { root.innerHTML = '<div class="card ec">لا تملك صلاحية الوصول لهذه الصفحة</div>'; return; }
   const showInactive = root.dataset.showInactive === '1';
   const emps = await DB.listEmployees(!showInactive);
   root.innerHTML = `
@@ -138,7 +138,7 @@ window.importEmployeesExcel = async (input) => {
 //  الرواتب — كشوفات شهرية
 // ════════════════════════════════════════════════════════════════
 PAGE_RENDER.payroll = async (root, mode = 'list', runId = null) => {
-  if (!can('admin','central_accountant')) { root.innerHTML = '<div class="card ec">لا تملك صلاحية الوصول لهذه الصفحة</div>'; return; }
+  if (!canTreasury()) { root.innerHTML = '<div class="card ec">لا تملك صلاحية الوصول لهذه الصفحة</div>'; return; }
   if (mode === 'new' || mode === 'edit') return renderPayrollForm(root, mode, runId);
   if (mode === 'view') return renderPayrollView(root, runId);
 
@@ -154,7 +154,7 @@ PAGE_RENDER.payroll = async (root, mode = 'list', runId = null) => {
         <td>
           <button class="btn btn-o btn-sm" onclick="PAGE_RENDER.payroll(document.getElementById('page-root'),'view','${r.id}')">عرض</button>
           ${r.status !== 'posted' ? `<button class="btn btn-o btn-sm" onclick="PAGE_RENDER.payroll(document.getElementById('page-root'),'edit','${r.id}')">تعديل</button>` : ''}
-          ${can('admin') || (can('central_accountant') && r.status !== 'posted') ? `<button class="btn btn-d btn-sm" onclick="deletePayrollRunConfirm('${r.id}','${(r.period||'').replace(/'/g,"\\'")}',${r.status==='posted'},'${r.journal_entry_id||''}')">🗑 حذف</button>` : ''}
+          ${can('admin') || (canTreasury() && r.status !== 'posted') ? `<button class="btn btn-d btn-sm" onclick="deletePayrollRunConfirm('${r.id}','${(r.period||'').replace(/'/g,"\\'")}',${r.status==='posted'},'${r.journal_entry_id||''}')">🗑 حذف</button>` : ''}
         </td>
       </tr>`).join('') || '<tr><td colspan="7" class="ec">لا توجد كشوفات رواتب بعد</td></tr>'}
     </tbody></table></div></div>
@@ -386,7 +386,7 @@ async function renderPayrollView(root, runId) {
         <button class="btn btn-o" onclick="exportPayrollExcel('${run.id}')">⬇ تصدير إكسل</button>
         <button class="btn btn-o" onclick="printPayroll('${run.id}')">🖨 طباعة</button>
         ${run.status !== 'posted' ? `<button class="btn btn-s" onclick="postPayrollConfirm('${run.id}')">🔒 ترحيل الكشف وإنشاء قيد الرواتب</button>` : ''}
-        ${can('admin') || (can('central_accountant') && run.status !== 'posted') ? `<button class="btn btn-d" onclick="deletePayrollRunConfirm('${run.id}','${(run.period||'').replace(/'/g,"\\'")}',${run.status==='posted'},'${run.journal_entry_id||''}')">🗑 حذف</button>` : ''}
+        ${can('admin') || (canTreasury() && run.status !== 'posted') ? `<button class="btn btn-d" onclick="deletePayrollRunConfirm('${run.id}','${(run.period||'').replace(/'/g,"\\'")}',${run.status==='posted'},'${run.journal_entry_id||''}')">🗑 حذف</button>` : ''}
       </div>
     </div>
     <div class="stats">
@@ -458,7 +458,7 @@ window.printPayroll = async (id) => {
 //  صندوق المركز
 // ════════════════════════════════════════════════════════════════
 PAGE_RENDER.cashbox = async (root) => {
-  if (!can('admin','central_accountant')) { root.innerHTML = '<div class="card ec">لا تملك صلاحية الوصول لهذه الصفحة</div>'; return; }
+  if (!canTreasury()) { root.innerHTML = '<div class="card ec">لا تملك صلاحية الوصول لهذه الصفحة</div>'; return; }
   const [balance, txns, recons, accs] = await Promise.all([
     DB.cashBalance(), DB.listCashTransactions(300), DB.listCashReconciliations(10), DB.chartOfAccounts(),
   ]);
