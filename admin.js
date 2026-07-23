@@ -88,10 +88,10 @@ window.hardDeleteUserConfirm = async (id, name) => {
 async function renderCountSettingsCard() {
   const accs = await DB.chartOfAccounts();
   const opts = (selected) => `<option value="">— اختر حساب —</option>` + accs.map(a => `<option value="${a.id}" ${a.id===selected?'selected':''}>${a.code} — ${a.name}</option>`).join('');
-  const [inv, short, surplus, cashbox, salExp, salPay, logoUrl, footerTxt, pettyCash] = await Promise.all([
+  const [inv, short, surplus, cashbox, salExp, salPay, logoUrl, footerTxt, pettyCash, threshold] = await Promise.all([
     DB.getSetting('inventory_account_id'), DB.getSetting('inventory_shortage_account_id'), DB.getSetting('inventory_surplus_account_id'),
     DB.getSetting('cashbox_account_id'), DB.getSetting('salary_expense_account_id'), DB.getSetting('salary_payment_account_id'),
-    DB.getSetting('print_logo_url'), DB.getSetting('print_footer_text'), DB.getSetting('petty_cash_account_id'),
+    DB.getSetting('print_logo_url'), DB.getSetting('print_footer_text'), DB.getSetting('petty_cash_account_id'), DB.getSetting('approval_threshold_amount'),
   ]);
   return `
     <div class="card" style="border:1px dashed var(--border)">
@@ -103,6 +103,14 @@ async function renderCountSettingsCard() {
       </div>
       <button class="btn btn-p btn-sm" id="cs-save3">💾 حفظ إعدادات الطباعة</button>
       <div id="cs-msg3" style="margin-top:8px;font-size:12px"></div>
+    </div>
+
+    <div class="card" style="border:1px dashed var(--border)">
+      <div class="card-title">📨 حد موافقة القيود اليدوية الكبيرة (Maker-Checker)</div>
+      <div style="font-size:12px;color:var(--ink3);margin-bottom:14px">أي قيد يدوي ينشئه محاسب المركز بمبلغ يساوي أو يتجاوز هذا الحد يُحفظ "معلَّقاً" وينتظر موافقة مدير النظام بدل الترحيل المباشر. اتركه صفراً لتعطيل هذا الشرط (كل القيود تُرحَّل مباشرة كالسابق).</div>
+      <div class="fg2" style="margin-bottom:10px"><div class="fgroup s2"><label>الحد الأدنى (د.ع)</label><input type="number" id="cs-threshold" value="${threshold || 0}"></div></div>
+      <button class="btn btn-p btn-sm" id="cs-save5">💾 حفظ الحد</button>
+      <div id="cs-msg5" style="margin-top:8px;font-size:12px"></div>
     </div>
 
     <div class="card" style="border:1px dashed var(--border)">
@@ -159,6 +167,14 @@ function bindCountSettingsHandlers() {
       await DB.setSetting('petty_cash_account_id', pc);
       document.getElementById('cs-msg4').innerHTML = '<span style="color:var(--ok)">✓ تم حفظ إعداد السلفة المستديمة</span>';
       toast('تم حفظ إعداد السلفة المستديمة', 's');
+    } catch (e) { toast('خطأ: ' + e.message, 'e'); }
+  };
+  const btn5 = document.getElementById('cs-save5');
+  if (btn5) btn5.onclick = async () => {
+    try {
+      await DB.setSetting('approval_threshold_amount', gv('cs-threshold') || '0');
+      document.getElementById('cs-msg5').innerHTML = '<span style="color:var(--ok)">✓ تم حفظ الحد</span>';
+      toast('تم حفظ حد الموافقة', 's');
     } catch (e) { toast('خطأ: ' + e.message, 'e'); }
   };
   const btn = document.getElementById('cs-save');
