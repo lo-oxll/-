@@ -38,6 +38,10 @@ PAGE_RENDER.dashboard = async (root) => {
         <canvas id="chart-movement" height="230"></canvas></div>
       <div class="card"><div class="card-title">🏆 أعلى المواد استهلاكاً (بالكمية)</div>
         <canvas id="chart-top" height="230"></canvas></div>
+      <div class="card"><div class="card-title">💸 اتجاه المصروفات الشهرية (من القيود الفعلية)</div>
+        <canvas id="chart-expense" height="230"></canvas></div>
+      <div class="card"><div class="card-title">📊 مقارنة سنوية (إيرادات، مصروفات، صافي)</div>
+        <canvas id="chart-yearly" height="230"></canvas></div>
     </div>
 
     <div class="fg2">
@@ -69,7 +73,9 @@ async function renderDashboardCharts(months = 6) {
   window.__dashCharts = [];
   if (typeof Chart === 'undefined') return; // تحميل المكتبة قد يكون بطيئاً بالشبكات الضعيفة
 
-  const [movement, topMats] = await Promise.all([DB.monthlyMovementChart(months), DB.topConsumedMaterials(8, months)]);
+  const [movement, topMats, expenseTrend, yearly] = await Promise.all([
+    DB.monthlyMovementChart(months), DB.topConsumedMaterials(8, months), DB.monthlyExpenseTrend(months), DB.yearlyComparison(5),
+  ]);
 
   const elM = document.getElementById('chart-movement');
   if (elM) {
@@ -95,6 +101,34 @@ async function renderDashboardCharts(months = 6) {
         datasets: [{ label: 'الكمية المصروفة', data: topMats.map(m => m.qty), backgroundColor: '#2f9e6e' }],
       },
       options: { indexAxis: 'y', responsive: true, plugins: { legend: { display: false } }, scales: { x: { beginAtZero: true } } },
+    }));
+  }
+
+  const elE = document.getElementById('chart-expense');
+  if (elE) {
+    window.__dashCharts.push(new Chart(elE, {
+      type: 'line',
+      data: {
+        labels: expenseTrend.map(m => m.month),
+        datasets: [{ label: 'المصروفات (د.ع)', data: expenseTrend.map(m => m.total), borderColor: '#d1554a', backgroundColor: 'rgba(209,85,74,.15)', fill: true, tension: .3 }],
+      },
+      options: { responsive: true, plugins: { legend: { display: false } }, scales: { y: { beginAtZero: true } } },
+    }));
+  }
+
+  const elY = document.getElementById('chart-yearly');
+  if (elY) {
+    window.__dashCharts.push(new Chart(elY, {
+      type: 'bar',
+      data: {
+        labels: yearly.map(y => y.year),
+        datasets: [
+          { label: 'الإيرادات', data: yearly.map(y => y.revenue), backgroundColor: '#2f9e6e' },
+          { label: 'المصروفات', data: yearly.map(y => y.expense), backgroundColor: '#d1554a' },
+          { label: 'الصافي', data: yearly.map(y => y.net), backgroundColor: '#d4a24c' },
+        ],
+      },
+      options: { responsive: true, plugins: { legend: { position: 'bottom', rtl: true } }, scales: { y: { beginAtZero: true } } },
     }));
   }
 }
@@ -390,7 +424,7 @@ function collectItemRows(prefix) {
 
 // ── الاستلام المخزني ──────────────────────────────
 PAGE_RENDER.receive = async (root) => {
-  const whs = await DB.listWarehouses();
+  const whs = scopedWarehouses(await DB.listWarehouses());
   root.innerHTML = `
     <div class="ph"><div><div class="ph-title">📥 استلام مخزني</div><div class="ph-sub">تسجيل وارد جديد إلى المخزن — السعر من وصل الاستلام</div></div>
       <div class="ph-actions"><button class="btn btn-o btn-sm" onclick="browseLastDoc('receipts')">📑 تصفح وثائق الاستلام السابقة</button></div></div>
@@ -443,7 +477,7 @@ window.submitReceipt = async (andPrint = false) => {
 
 // ── الإصدار المخزني ──────────────────────────────
 PAGE_RENDER.issue = async (root) => {
-  const whs = await DB.listWarehouses();
+  const whs = scopedWarehouses(await DB.listWarehouses());
   root.innerHTML = `
     <div class="ph"><div><div class="ph-title">📤 إصدار مخزني</div><div class="ph-sub">السعر يُحسب تلقائياً بالمتوسط الوزني المرجّح لحظة الحفظ</div></div>
       <div class="ph-actions"><button class="btn btn-o btn-sm" onclick="browseLastDoc('issues')">📑 تصفح وثائق الإصدار السابقة</button></div></div>
@@ -657,7 +691,7 @@ window.viewAttachment = async (path) => {
 
 // ── الأرصدة والجرد ──────────────────────────────
 PAGE_RENDER.balance = async (root, whId = '') => {
-  const whs = await DB.listWarehouses();
+  const whs = scopedWarehouses(await DB.listWarehouses());
   const stock = await DB.fullBalance(whId || null);
   root.innerHTML = `
     <div class="ph"><div><div class="ph-title">الأرصدة والجرد</div><div class="ph-sub">الرصيد الحالي وقيمته بالسعر الوسطي المرجّح</div></div>
@@ -729,7 +763,7 @@ PAGE_RENDER.physcount = async (root, mode = 'list', countId = '') => {
 };
 
 async function renderPhysCountNew(root) {
-  const whs = await DB.listWarehouses();
+  const whs = scopedWarehouses(await DB.listWarehouses());
   root.innerHTML = `
     <div class="ph"><div><div class="ph-title">🧮 جرد فعلي جديد</div><div class="ph-sub">اختر المخزن ثم حمّل أرصدته الدفترية وابدأ بإدخال الكميات المعدودة فعلياً</div></div>
       <div class="ph-actions"><button class="btn btn-o btn-sm" onclick="PAGE_RENDER.physcount(document.getElementById('page-root'),'list')">↩ رجوع للقائمة</button></div></div>
