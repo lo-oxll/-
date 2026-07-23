@@ -707,6 +707,197 @@ const DB = {
     await this.log('delete_petty_cash_voucher', 'petty_cash_vouchers', id, { doc_num: docNum });
   },
 
+  // ── التحويل المخزني بين المخازن ─────────────────────────────
+  async listStockTransfers(limit = 200) {
+    const { data, error } = await sb.from('stock_transfers').select('*, from:from_warehouse_id(code,name), to:to_warehouse_id(code,name)').order('seq_no', { ascending: false }).limit(limit);
+    if (error) throw error; return data;
+  },
+  async getStockTransfer(id) {
+    const { data, error } = await sb.from('stock_transfers').select('*, from:from_warehouse_id(code,name), to:to_warehouse_id(code,name)').eq('id', id).single();
+    if (error) throw error; return data;
+  },
+  async stockTransferItems(id) {
+    const { data, error } = await sb.from('stock_transfer_items').select('*, materials(store_num,name,unit)').eq('transfer_id', id);
+    if (error) throw error; return data;
+  },
+  async createStockTransfer(header, items) {
+    const session = await this.currentSession();
+    const { data: t, error: e1 } = await sb.from('stock_transfers').insert({ ...header, created_by: session?.user?.id }).select().single();
+    if (e1) throw friendlyDbError(e1);
+    const { error: e2 } = await sb.from('stock_transfer_items').insert(items.map(it => ({ ...it, transfer_id: t.id })));
+    if (e2) throw friendlyDbError(e2);
+    const { error: e3 } = await sb.rpc('fn_post_stock_transfer', { p_transfer_id: t.id });
+    if (e3) throw friendlyDbError(e3);
+    await this.log('create_stock_transfer', 'stock_transfers', t.id, { doc_num: header.doc_num, items: items.length });
+    return t;
+  },
+  async cancelStockTransfer(id, docNum) {
+    const { error } = await sb.rpc('fn_cancel_stock_transfer', { p_transfer_id: id });
+    if (error) throw friendlyDbError(error);
+    await this.log('cancel_stock_transfer', 'stock_transfers', id, { doc_num: docNum });
+  },
+  async deleteStockTransfer(id, docNum) {
+    const { error: e1 } = await sb.from('stock_transfer_items').delete().eq('transfer_id', id);
+    if (e1) throw friendlyDbError(e1);
+    const { error } = await sb.from('stock_transfers').delete().eq('id', id);
+    if (error) throw friendlyDbError(error);
+    await this.log('delete_stock_transfer', 'stock_transfers', id, { doc_num: docNum });
+  },
+
+  // ── سلف الموظفين ─────────────────────────────
+  async listEmployeeLoans(activeOnly = false) {
+    let q = sb.from('employee_loans').select('*, employees(full_name)').order('created_at', { ascending: false });
+    if (activeOnly) q = q.eq('status', 'active');
+    const { data, error } = await q; if (error) throw error; return data;
+  },
+  async activeLoanForEmployee(employeeId) {
+    const { data, error } = await sb.from('employee_loans').select('*').eq('employee_id', employeeId).eq('status', 'active').maybeSingle();
+    if (error) throw error; return data;
+  },
+  async createEmployeeLoan(l) {
+    const session = await this.currentSession();
+    const { data, error } = await sb.from('employee_loans').insert({ ...l, remaining_balance: l.principal_amount, created_by: session?.user?.id }).select().single();
+    if (error) throw friendlyDbError(error);
+    await this.log('create_employee_loan', 'employee_loans', data.id, { amount: l.principal_amount });
+    return data;
+  },
+  async closeEmployeeLoan(id) {
+    const { error } = await sb.from('employee_loans').update({ status: 'closed' }).eq('id', id);
+    if (error) throw friendlyDbError(error);
+    await this.log('close_employee_loan', 'employee_loans', id, {});
+  },
+  async deleteEmployeeLoan(id) {
+    const { error } = await sb.from('employee_loans').delete().eq('id', id);
+    if (error) throw friendlyDbError(error);
+    await this.log('delete_employee_loan', 'employee_loans', id, {});
+  },
+
+  // ── دليل الموردين ─────────────────────────────
+  async listSuppliers(activeOnly = true) {
+    let q = sb.from('suppliers').select('*').order('name');
+    if (activeOnly) q = q.eq('is_active', true);
+    const { data, error } = await q; if (error) throw error; return data;
+  },
+  async createSupplier(s) {
+    const { data, error } = await sb.from('suppliers').insert(s).select().single();
+    if (error) throw friendlyDbError(error);
+    await this.log('create_supplier', 'suppliers', data.id, { name: s.name });
+    return data;
+  },
+  async updateSupplier(id, patch) {
+    const { error } = await sb.from('suppliers').update(patch).eq('id', id);
+    if (error) throw friendlyDbError(error);
+    await this.log('update_supplier', 'suppliers', id, patch);
+  },
+  async deleteSupplier(id, name) {
+    const { error } = await sb.from('suppliers').delete().eq('id', id);
+    if (error) throw friendlyDbError(error);
+    await this.log('delete_supplier', 'suppliers', id, { name });
+  },
+
+  // ── الأصول الثابتة ─────────────────────────────
+  async listFixedAssets(activeOnly = false) {
+    let q = sb.from('fixed_assets').select('*, asset_account:asset_account_id(code,name), dep_account:depreciation_account_id(code,name)').order('created_at', { ascending: false });
+    if (activeOnly) q = q.eq('status', 'active');
+    const { data, error } = await q; if (error) throw error; return data;
+  },
+  async createFixedAsset(a) {
+    const session = await this.currentSession();
+    const { data, error } = await sb.from('fixed_assets').insert({ ...a, created_by: session?.user?.id }).select().single();
+    if (error) throw friendlyDbError(error);
+    await this.log('create_fixed_asset', 'fixed_assets', data.id, { name: a.name, cost: a.cost });
+    return data;
+  },
+  async disposeFixedAsset(id) {
+    const { error } = await sb.from('fixed_assets').update({ status: 'disposed' }).eq('id', id);
+    if (error) throw friendlyDbError(error);
+    await this.log('dispose_fixed_asset', 'fixed_assets', id, {});
+  },
+  async deleteFixedAsset(id, name) {
+    const { error } = await sb.from('fixed_assets').delete().eq('id', id);
+    if (error) throw friendlyDbError(error);
+    await this.log('delete_fixed_asset', 'fixed_assets', id, { name });
+  },
+  async listDepreciationRuns() {
+    const { data, error } = await sb.from('depreciation_runs').select('*').order('run_date', { ascending: false });
+    if (error) throw error; return data;
+  },
+  async postDepreciation(periodLabel) {
+    const { data, error } = await sb.rpc('fn_post_depreciation', { p_period_label: periodLabel });
+    if (error) throw friendlyDbError(error);
+    await this.log('post_depreciation', 'depreciation_runs', data, { period: periodLabel });
+    return data;
+  },
+  async deleteDepreciationRun(id, journalEntryId) {
+    if (journalEntryId) {
+      const { error: eJ } = await sb.rpc('fn_admin_delete_journal_entry', { p_entry_id: journalEntryId });
+      if (eJ) throw friendlyDbError(eJ);
+    }
+    const { error } = await sb.from('depreciation_runs').delete().eq('id', id);
+    if (error) throw friendlyDbError(error);
+    await this.log('delete_depreciation_run', 'depreciation_runs', id, {});
+  },
+
+  // ── الموازنة التقديرية ─────────────────────────────
+  async listBudgets(fiscalYearId) {
+    const { data, error } = await sb.from('budgets').select('*, chart_of_accounts(code,name,type)').eq('fiscal_year_id', fiscalYearId);
+    if (error) throw error; return data;
+  },
+  async upsertBudget(b) {
+    const { error } = await sb.from('budgets').upsert(b, { onConflict: 'fiscal_year_id,account_id' });
+    if (error) throw friendlyDbError(error);
+  },
+  async deleteBudget(id) {
+    const { error } = await sb.from('budgets').delete().eq('id', id);
+    if (error) throw friendlyDbError(error);
+  },
+  // الفعلي المتحقق لكل حساب ضمن فترة سنة مالية معيّنة (صافي مدين-دائن)
+  async actualByAccount(fiscalYearId) {
+    const { data: fy, error: e0 } = await sb.from('fiscal_years').select('*').eq('id', fiscalYearId).single();
+    if (e0) throw e0;
+    const start = `${fy.year}-01-01`, end = `${fy.year}-12-31`;
+    const { data, error } = await sb.from('journal_lines').select('account_id, debit, credit, journal_entries!inner(entry_date)')
+      .gte('journal_entries.entry_date', start).lte('journal_entries.entry_date', end);
+    if (error) throw error;
+    const map = {};
+    data.forEach(l => { map[l.account_id] = (map[l.account_id] || 0) + Number(l.debit || 0) - Number(l.credit || 0); });
+    return map;
+  },
+
+  // ── موافقة القيود اليدوية الكبيرة (Maker-Checker) ─────────────────────────────
+  async listPendingEntries(status = 'pending') {
+    const { data, error } = await sb.from('pending_journal_entries').select('*, requester:requested_by(full_name)').eq('status', status).order('created_at', { ascending: false });
+    if (error) throw error; return data;
+  },
+  async createPendingEntry(entry, lines) {
+    const session = await this.currentSession();
+    const total = lines.reduce((s, l) => s + Number(l.debit || 0), 0);
+    const { data, error } = await sb.from('pending_journal_entries').insert({
+      entry_date: entry.entry_date, description: entry.description, lines, total_amount: total, requested_by: session?.user?.id,
+    }).select().single();
+    if (error) throw friendlyDbError(error);
+    await this.log('request_journal_approval', 'pending_journal_entries', data.id, { total });
+    return data;
+  },
+  async approvePendingEntry(id, note) {
+    const { data, error } = await sb.rpc('fn_approve_pending_entry', { p_id: id, p_note: note || null });
+    if (error) throw friendlyDbError(error);
+    await this.log('approve_journal_entry', 'pending_journal_entries', id, {});
+    return data;
+  },
+  async rejectPendingEntry(id, note) {
+    const { error } = await sb.rpc('fn_reject_pending_entry', { p_id: id, p_note: note || null });
+    if (error) throw friendlyDbError(error);
+    await this.log('reject_journal_entry', 'pending_journal_entries', id, {});
+  },
+
+  // ── فحص سلامة البيانات ─────────────────────────────
+  async integrityCheck() {
+    const { data, error } = await sb.rpc('fn_integrity_check');
+    if (error) throw friendlyDbError(error);
+    return data;
+  },
+
   // ── سجل المراجعة ─────────────────────────────
   async log(action, entity, entity_id, details = {}) {
     const session = await this.currentSession();
@@ -721,3 +912,4 @@ const DB = {
 
 window.DB = DB;
 window.sb = sb;
+
