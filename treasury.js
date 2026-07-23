@@ -327,10 +327,19 @@ window.loadAllActiveEmployeesToPayroll = async () => {
   const emps = await DB.listEmployees(true);
   const toAdd = emps.filter(e => !existingIds.has(e.id));
   if (!toAdd.length) { toast('كل الموظفين النشطين مُضافون بالفعل', 'i'); return; }
-  toAdd.forEach(emp => {
+  for (const emp of toAdd) {
     tbody.insertAdjacentHTML('beforeend', payrollRowHTML(emp));
-    tbody.lastElementChild.dataset.empId = emp.id;
-  });
+    const tr = tbody.lastElementChild;
+    tr.dataset.empId = emp.id;
+    // تعبئة قسط السلفة تلقائياً من أي سلفة نشطة لهذا الموظف (لا يتجاوز الرصيد المتبقي)
+    try {
+      const loan = await DB.activeLoanForEmployee(emp.id);
+      if (loan) {
+        const installment = Math.min(Number(loan.monthly_installment), Number(loan.remaining_balance));
+        tr.querySelector('.pr-loan').value = installment;
+      }
+    } catch (e) { /* صامت — لا تعطّل تحميل بقية الموظفين */ }
+  }
   recalcPayroll();
   toast(`تمت إضافة ${toAdd.length} موظف`, 's');
 };
