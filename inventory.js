@@ -455,6 +455,7 @@ PAGE_RENDER.receive = async (root) => {
   addItemRow('r', true);
 };
 window.submitReceipt = async (andPrint = false) => {
+  if (window.__submittingDoc) return; // يمنع الحفظ المزدوج عند نقر متكرر سريع
   const docnum = gv('r-docnum'), date = gv('r-date'), wh = gv('r-wh');
   if (!docnum || !date || !wh) { toast('أكمل بيانات الوثيقة (رقم/تاريخ/مخزن)', 'e'); return; }
   const { rows: items, problems } = collectItemRows('r');
@@ -462,6 +463,9 @@ window.submitReceipt = async (andPrint = false) => {
   if (!items.length) { toast('أضف مادة واحدة على الأقل مع كمية وسعر', 'e'); return; }
   if (items.some(i => i.unit_price <= 0)) { toast('يجب إدخال سعر الوصل لكل مادة مستلَمة', 'e'); return; }
   const attachFile = document.getElementById('r-attach')?.files?.[0] || null;
+  window.__submittingDoc = true;
+  const btns = document.querySelectorAll('.form-foot .btn');
+  btns.forEach(b => b.disabled = true);
   try {
     const rdoc = await DB.createReceipt({ doc_num: docnum, doc_date: date, warehouse_id: wh, supplier: '', purchase_ref: '', notes: gv('r-notes'), created_by: ME.id }, items);
     if (attachFile) {
@@ -472,7 +476,10 @@ window.submitReceipt = async (andPrint = false) => {
     window.__docSeq = null; // إبطال التسلسل المخزّن مؤقتاً ليعاد جلبه شاملاً الوثيقة الجديدة
     await viewDoc('receipts', rdoc.id, '');
     if (andPrint) printCurrentDoc();
-  } catch (e) { toast('خطأ: ' + e.message, 'e'); }
+  } catch (e) {
+    toast('خطأ: ' + (e.message?.includes('duplicate key') ? `رقم المستند "${docnum}" مستخدَم مسبقاً بهذا المخزن — اختر رقماً آخر أو راجع سجل الوثائق` : e.message), 'e');
+    btns.forEach(b => b.disabled = false);
+  } finally { window.__submittingDoc = false; }
 };
 
 // ── الإصدار المخزني ──────────────────────────────
@@ -518,6 +525,7 @@ window.refreshIssueRowPrices = async () => {
 };
 
 window.submitIssue = async (andPrint = false) => {
+  if (window.__submittingDoc) return; // يمنع الحفظ المزدوج عند نقر متكرر سريع
   const docnum = gv('i-docnum'), date = gv('i-date'), wh = gv('i-wh');
   if (!docnum || !date || !wh) { toast('أكمل بيانات الوثيقة (رقم/تاريخ/مخزن)', 'e'); return; }
   const { rows: items, problems } = collectItemRows('i');
@@ -529,13 +537,19 @@ window.submitIssue = async (andPrint = false) => {
     const stock = await DB.stockOf(it.material_id, wh);
     if (it.qty > stock.qty_on_hand) { toast('الكمية المطلوبة تتجاوز الرصيد المتاح لإحدى المواد', 'e'); return; }
   }
+  window.__submittingDoc = true;
+  const btns = document.querySelectorAll('.form-foot .btn');
+  btns.forEach(b => b.disabled = true);
   try {
     const idoc = await DB.createIssue({ doc_num: docnum, doc_date: date, warehouse_id: wh, recipient_type: '', recipient_name: '', recipient_person: '', notes: gv('i-notes'), created_by: ME.id }, items);
     toast('✅ تم حفظ وترحيل وثيقة الإصدار', 's');
     window.__docSeq = null;
     await viewDoc('issues', idoc.id, '');
     if (andPrint) printCurrentDoc();
-  } catch (e) { toast(friendlyStockError(e.message), 'e'); }
+  } catch (e) {
+    toast(friendlyStockError(e.message?.includes('duplicate key') ? `رقم المستند "${docnum}" مستخدَم مسبقاً بهذا المخزن — اختر رقماً آخر أو راجع سجل الوثائق` : e.message), 'e');
+    btns.forEach(b => b.disabled = false);
+  } finally { window.__submittingDoc = false; }
 };
 
 window.browseLastDoc = async (tab) => {
