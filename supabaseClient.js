@@ -59,6 +59,12 @@ const DB = {
     if (error) throw friendlyDbError(error);
     await this.log('hard_delete_user', 'profiles', id, { name });
   },
+  // تحديد نطاق مخازن محاسب معيّن + صلاحية الخزينة والرواتب — مدير النظام فقط (عبر RLS)
+  async updateProfileScope(id, { warehouse_ids, can_treasury }) {
+    const { error } = await sb.from('profiles').update({ warehouse_ids, can_treasury }).eq('id', id);
+    if (error) throw friendlyDbError(error);
+    await this.log('update_profile_scope', 'profiles', id, { warehouse_ids, can_treasury });
+  },
 
   // ── مخازن ─────────────────────────────
   async listWarehouses() {
@@ -462,6 +468,47 @@ const DB = {
     const stock = await this.fullBalance();
     const total = stock.reduce((s,x)=>s+ (Number(x.qty_on_hand)||0) * (Number(x.avg_price)||0), 0);
     return total;
+  },
+  // اتجاه المصروفات الشهرية (من القيود المحاسبية الفعلية — حسابات المصروفات فقط)
+  async monthlyExpenseTrend(months = 6) {
+    const since = new Date(); since.setMonth(since.getMonth() - (months - 1)); since.setDate(1);
+    const sinceISO = since.toISOString().split('T')[0];
+    const { data, error } = await sb.from('journal_lines')
+      .select('debit, credit, journal_entries!inner(entry_date), chart_of_accounts!inner(type)')
+      .eq('chart_of_accounts.type', 'expense')
+      .gte('journal_entries.entry_date', sinceISO);
+    if (error) throw error;
+    const buckets = {};
+    for (let k = 0; k < months; k++) {
+      const d = new Date(since); d.setMonth(d.getMonth() + k);
+      buckets[`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`] = 0;
+    }
+    (data||[]).forEach(l => {
+      const k = l.journal_entries?.entry_date?.slice(0,7);
+      if (k in buckets) buckets[k] += (Number(l.debit)||0) - (Number(l.credit)||0);
+    });
+    return Object.entries(buckets).map(([month, total]) => ({ month, total }));
+  },
+  // مقارنة سنوية: إيرادات/مصروفات/صافي لكل سنة مالية مسجَّلة (آخر N سنة)
+  async yearlyComparison(yearsCount = 4) {
+    const years = await this.listFiscalYears();
+    const sorted = [...years].map(y => y.year).sort((a,b) => b-a).slice(0, yearsCount).sort((a,b) => a-b);
+    const results = [];
+    for (const year of sorted) {
+      const start = `${year}-01-01`, end = `${year}-12-31`;
+      const { data, error } = await sb.from('journal_lines')
+        .select('debit, credit, chart_of_accounts!inner(type), journal_entries!inner(entry_date)')
+        .gte('journal_entries.entry_date', start).lte('journal_entries.entry_date', end)
+        .in('chart_of_accounts.type', ['revenue','expense']);
+      if (error) throw error;
+      let revenue = 0, expense = 0;
+      (data||[]).forEach(l => {
+        if (l.chart_of_accounts.type === 'revenue') revenue += (Number(l.credit)||0) - (Number(l.debit)||0);
+        else expense += (Number(l.debit)||0) - (Number(l.credit)||0);
+      });
+      results.push({ year, revenue, expense, net: revenue - expense });
+    }
+    return results;
   },
 
   // ── صندوق المركز (Cash Box) ─────────────────────────────
@@ -912,4 +959,3 @@ const DB = {
 
 window.DB = DB;
 window.sb = sb;
-
