@@ -56,20 +56,27 @@ const PAGES = [
   { section: 'الحركة المخزنية', items: [
     { id: 'receive', label: 'استلام مخزني', icon: '📥', roles: ['admin','accountant'] },
     { id: 'issue', label: 'إصدار مخزني', icon: '📤', roles: ['admin','accountant'] },
+    { id: 'transfer', label: 'تحويل بين المخازن', icon: '🔀', roles: ['admin','accountant'] },
     { id: 'docs', label: 'سجل الوثائق', icon: '📑' },
     { id: 'balance', label: 'الأرصدة والجرد', icon: '⚖️' },
     { id: 'physcount', label: 'الجرد الدوري', icon: '🧮', roles: ['admin','accountant','manager'] },
     { id: 'lowstock', label: 'تنبيهات إعادة الطلب', icon: '🔔' },
     { id: 'materials', label: 'دليل المواد', icon: '📚', roles: ['admin','accountant'] },
     { id: 'warehouses', label: 'المخازن', icon: '🏬', roles: ['admin'] },
+    { id: 'suppliers', label: 'دليل الموردين', icon: '🏪', roles: ['admin','accountant','central_accountant'] },
   ]},
   { section: 'المحاسبة', items: [
     { id: 'coa', label: 'دليل الحسابات', icon: '🗂' },
     { id: 'journal', label: 'القيود المحاسبية', icon: '🧾' },
+    { id: 'approvals', label: 'طلبات الموافقة', icon: '📨', roles: ['admin'] },
     { id: 'reports', label: 'التقارير المالية', icon: '📈' },
+    { id: 'budget', label: 'الموازنة التقديرية', icon: '📐', roles: ['admin','manager','central_accountant','auditor'] },
+    { id: 'fixedassets', label: 'الأصول الثابتة', icon: '🏢', roles: ['admin','central_accountant','manager','auditor'] },
+    { id: 'integrity', label: 'فحص سلامة البيانات', icon: '🩺', roles: ['admin','manager','auditor'] },
   ]},
   { section: 'إدارة الموظفين', items: [
     { id: 'employees', label: 'الموظفون', icon: '🪪', roles: ['admin','central_accountant'] },
+    { id: 'loans', label: 'سلف الموظفين', icon: '💳', roles: ['admin','central_accountant'] },
   ]},
   { section: 'الخزينة والرواتب', items: [
     { id: 'cashbox', label: 'صندوق المركز', icon: '💰', roles: ['admin','central_accountant'] },
@@ -83,6 +90,7 @@ const PAGES = [
     { id: 'fiscal', label: 'السنوات المالية', icon: '📅', roles: ['admin','manager'] },
     { id: 'users', label: 'المستخدمون والصلاحيات', icon: '👤', roles: ['admin','manager'] },
     { id: 'auditlog', label: 'سجل المراجعة', icon: '🔐', roles: ['admin','manager'] },
+    { id: 'security', label: 'الأمان (2FA)', icon: '🛡️' },
   ]},
 ];
 
@@ -133,6 +141,13 @@ async function refreshBadges() {
       const pending = await DB.listPendingUsers();
       const bu = document.getElementById('badge-users');
       if (bu) { bu.textContent = pending.length; bu.classList.toggle('hidden', pending.length === 0); }
+    } catch (e) { /* صامت */ }
+  }
+  if (can('admin')) {
+    try {
+      const pendingEntries = await DB.listPendingEntries('pending');
+      const ba = document.getElementById('badge-approvals');
+      if (ba) { ba.textContent = pendingEntries.length; ba.classList.toggle('hidden', pendingEntries.length === 0); }
     } catch (e) { /* صامت */ }
   }
 }
