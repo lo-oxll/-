@@ -18,7 +18,7 @@ PAGE_RENDER.users = async (root) => {
         ${pending.map(u => `<tr><td>${u.full_name}</td><td class="mono">${new Date(u.created_at).toLocaleDateString('ar-IQ')}</td>
           ${isAdmin ? `
           <td><select id="pend-role-${u.id}">
-            ${['accountant','central_accountant','manager','auditor'].map(r => `<option value="${r}">${ROLE_LABEL[r]}</option>`).join('')}
+            ${['accountant','manager','auditor'].map(r => `<option value="${r}">${ROLE_LABEL[r]}</option>`).join('')}
           </select></td>
           <td>
             <button class="btn btn-s btn-sm" onclick="approvePendingUser('${u.id}')">✅ الموافقة</button>
@@ -29,11 +29,16 @@ PAGE_RENDER.users = async (root) => {
       ${isAdmin ? `<div style="font-size:11px;color:var(--ink3);margin-top:10px">"رفض" يحذف ملف المستخدم من النظام فقط — حساب الدخول نفسه (البريد/كلمة المرور) يبقى موجوداً بخدمة المصادقة ولازم يُحذف نهائياً من لوحة Supabase لو تحتاج ذلك.</div>` : ''}
     </div>` : ''}
 
-    <div class="card"><div class="itw"><table><thead><tr><th>الاسم</th><th>الدور</th><th>الحالة</th>${isAdmin ? '<th></th>' : ''}</tr></thead><tbody>
+    <div class="card"><div class="itw"><table><thead><tr><th>الاسم</th><th>الدور</th><th>الصلاحيات الإضافية</th><th>الحالة</th>${isAdmin ? '<th></th>' : ''}</tr></thead><tbody>
       ${users.map(u => `<tr><td>${u.full_name}</td>
         <td>${isAdmin ? `<select onchange="changeRole('${u.id}', this.value, '${u.role}')">
-          ${['admin','accountant','central_accountant','manager','auditor'].map(r => `<option value="${r}" ${u.role===r?'selected':''}>${ROLE_LABEL[r]}</option>`).join('')}
+          ${['admin','accountant','manager','auditor'].map(r => `<option value="${r}" ${u.role===r?'selected':''}>${ROLE_LABEL[r]}</option>`).join('')}
         </select>` : `<span class="chip">${ROLE_LABEL[u.role] || u.role}</span>`}</td>
+        <td>${u.role === 'accountant' ? `
+          <span class="chip ${u.can_treasury ? 'chip-ok' : ''}">${u.can_treasury ? '💰 الخزينة والرواتب' : 'مخزني فقط'}</span>
+          <span class="chip">${u.warehouse_ids && u.warehouse_ids.length ? `🏬 ${u.warehouse_ids.length} مخزن محدَّد` : 'كل المخازن'}</span>
+          ${isAdmin ? `<button class="btn btn-o btn-sm" onclick='openScopeModal(${JSON.stringify(u).replace(/'/g,"&#39;")})'>تعديل الصلاحيات</button>` : ''}
+        ` : '<span style="color:var(--ink3);font-size:11px">—</span>'}</td>
         <td>${u.is_active ? '<span class="chip-ok chip">فعّال</span>' : '<span class="chip-danger chip">موقوف</span>'}</td>
         ${isAdmin ? `<td>
           <button class="btn btn-o btn-sm" onclick="toggleActive('${u.id}', ${!u.is_active})">${u.is_active?'إيقاف':'تفعيل'}</button>
@@ -61,6 +66,27 @@ window.rejectPendingUser = async (id, name) => {
     toast('تم رفض الحساب', 's');
     go('users');
   } catch (e) { toast('خطأ: ' + e.message, 'e'); }
+};
+// تحديد صلاحيات محاسب محدَّد: أي مخازن يشتغل عليها، وهل له صلاحية الخزينة والرواتب
+window.openScopeModal = async (u) => {
+  const whs = await DB.listWarehouses();
+  const current = new Set(u.warehouse_ids || []);
+  showModal(`صلاحيات: ${u.full_name}`, `
+    <div style="font-size:12px;color:var(--ink3);margin-bottom:12px">اترك كل المخازن بدون تحديد ليشتغل عليها كلها بدون قيد.</div>
+    <div class="fgroup" style="margin-bottom:14px">
+      <label style="display:flex;align-items:center;gap:6px"><input type="checkbox" id="m-scope-treasury" style="width:auto" ${u.can_treasury?'checked':''}> صلاحية الخزينة والرواتب والسلفة المستديمة (صندوق المركز، الرواتب، الموظفين، سلف الموظفين)</label>
+    </div>
+    <label style="font-size:11px;color:var(--ink2);font-weight:600;display:block;margin-bottom:6px">المخازن المسموح بها (بدون تحديد = الكل)</label>
+    <div style="max-height:220px;overflow-y:auto;border:1px solid var(--border);border-radius:8px;padding:8px">
+      ${whs.map(w => `<label style="display:flex;align-items:center;gap:6px;padding:5px 0"><input type="checkbox" class="m-scope-wh" value="${w.id}" style="width:auto" ${current.has(w.id)?'checked':''}> ${w.code} — ${w.name}</label>`).join('') || '<div class="ec">لا توجد مخازن</div>'}
+    </div>
+  `, async () => {
+    const selected = [...document.querySelectorAll('.m-scope-wh:checked')].map(el => el.value);
+    try {
+      await DB.updateProfileScope(u.id, { warehouse_ids: selected.length ? selected : null, can_treasury: document.getElementById('m-scope-treasury').checked });
+      toast('تم حفظ الصلاحيات', 's'); go('users'); return true;
+    } catch (e) { toast('خطأ: ' + e.message, 'e'); return false; }
+  });
 };
 window.changeRole = async (id, role, oldRole) => {
   const { error } = await sb.from('profiles').update({ role }).eq('id', id);
