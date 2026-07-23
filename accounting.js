@@ -6,7 +6,7 @@ const JOURNAL_REF_LABEL = { receipt: 'استلام', issue: 'إصدار', physic
 
 PAGE_RENDER.coa = async (root) => {
   const accs = await DB.chartOfAccounts();
-  const canEdit = can('admin','central_accountant');
+  const canEdit = canTreasury();
   root.innerHTML = `
     <div class="ph"><div><div class="ph-title">دليل الحسابات</div><div class="ph-sub">الهيكل المحاسبي المستخدم للترحيل التلقائي والقيود اليدوية</div></div>
       <div class="ph-actions">
@@ -190,7 +190,7 @@ function renderJournalPage(root, st) {
       <div class="ph-actions">
         <button class="btn btn-o btn-sm" onclick="exportJournalExcel()">⬇ تصدير إكسل (حتى 1000 قيد)</button>
         ${can('admin') ? `<button class="btn btn-o btn-sm" onclick="go('approvals')">📨 طلبات الموافقة</button>` : ''}
-        ${can('admin','central_accountant') ? '<button class="btn btn-p" onclick="openJournalModal()">+ قيد يدوي</button>' : ''}
+        ${canTreasury() ? '<button class="btn btn-p" onclick="openJournalModal()">+ قيد يدوي</button>' : ''}
       </div></div>
     ${entries.map(e => `<div class="card">
       <div class="ph" style="margin:0 0 4px">
