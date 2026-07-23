@@ -44,9 +44,18 @@ function friendlyStockError(msg) {
 window.friendlyStockError = friendlyStockError;
 
 // ── صلاحيات حسب الدور ──────────────────────────────
-const ROLE_LABEL = { admin: 'مدير النظام', accountant: 'محاسب سيطرة مخزنية', central_accountant: 'محاسب المركز', manager: 'مدير', auditor: 'مدقق' };
+const ROLE_LABEL = { admin: 'مدير النظام', accountant: 'محاسب', manager: 'مدير', auditor: 'مدقق' };
 function can(...roles) { return ME && roles.includes(ME.role); }
 window.can = can;
+// صلاحية الخزينة والرواتب والسلفة المستديمة: مدير النظام دائماً، أو محاسب مُفعَّل له can_treasury تحديداً
+function canTreasury() { return ME && (ME.role === 'admin' || (ME.role === 'accountant' && ME.can_treasury)); }
+window.canTreasury = canTreasury;
+// تقييد قائمة المخازن حسب نطاق المحاسب (NULL/غير محاسب = بدون تقييد)
+function scopedWarehouses(all) {
+  if (!ME || ME.role !== 'accountant' || !ME.warehouse_ids || !ME.warehouse_ids.length) return all;
+  return all.filter(w => ME.warehouse_ids.includes(w.id));
+}
+window.scopedWarehouses = scopedWarehouses;
 
 // ── تعريف الصفحات والقائمة الجانبية ──────────────────────────────
 const PAGES = [
@@ -63,28 +72,28 @@ const PAGES = [
     { id: 'lowstock', label: 'تنبيهات إعادة الطلب', icon: '🔔' },
     { id: 'materials', label: 'دليل المواد', icon: '📚', roles: ['admin','accountant'] },
     { id: 'warehouses', label: 'المخازن', icon: '🏬', roles: ['admin'] },
-    { id: 'suppliers', label: 'دليل الموردين', icon: '🏪', roles: ['admin','accountant','central_accountant'] },
+    { id: 'suppliers', label: 'دليل الموردين', icon: '🏪', roles: ['admin','accountant'] },
   ]},
   { section: 'المحاسبة', items: [
     { id: 'coa', label: 'دليل الحسابات', icon: '🗂' },
     { id: 'journal', label: 'القيود المحاسبية', icon: '🧾' },
     { id: 'approvals', label: 'طلبات الموافقة', icon: '📨', roles: ['admin'] },
     { id: 'reports', label: 'التقارير المالية', icon: '📈' },
-    { id: 'budget', label: 'الموازنة التقديرية', icon: '📐', roles: ['admin','manager','central_accountant','auditor'] },
-    { id: 'fixedassets', label: 'الأصول الثابتة', icon: '🏢', roles: ['admin','central_accountant','manager','auditor'] },
+    { id: 'budget', label: 'الموازنة التقديرية', icon: '📐', roles: ['admin','manager','accountant','auditor'] },
+    { id: 'fixedassets', label: 'الأصول الثابتة', icon: '🏢', roles: ['admin','accountant','manager','auditor'] },
     { id: 'integrity', label: 'فحص سلامة البيانات', icon: '🩺', roles: ['admin','manager','auditor'] },
   ]},
   { section: 'إدارة الموظفين', items: [
-    { id: 'employees', label: 'الموظفون', icon: '🪪', roles: ['admin','central_accountant'] },
-    { id: 'loans', label: 'سلف الموظفين', icon: '💳', roles: ['admin','central_accountant'] },
+    { id: 'employees', label: 'الموظفون', icon: '🪪', roles: ['admin','accountant'], check: canTreasury },
+    { id: 'loans', label: 'سلف الموظفين', icon: '💳', roles: ['admin','accountant'], check: canTreasury },
   ]},
   { section: 'الخزينة والرواتب', items: [
-    { id: 'cashbox', label: 'صندوق المركز', icon: '💰', roles: ['admin','central_accountant'] },
-    { id: 'payroll', label: 'الرواتب', icon: '🧑‍💼', roles: ['admin','central_accountant'] },
+    { id: 'cashbox', label: 'صندوق المركز', icon: '💰', roles: ['admin','accountant'], check: canTreasury },
+    { id: 'payroll', label: 'الرواتب', icon: '🧑‍💼', roles: ['admin','accountant'], check: canTreasury },
   ]},
   { section: 'السلفة المستديمة', items: [
-    { id: 'pettycash', label: 'سندات الصرف', icon: '🧾', roles: ['admin','central_accountant','manager','auditor'] },
-    { id: 'pettycashfund', label: 'قائمة السلفة', icon: '📒', roles: ['admin','central_accountant','manager','auditor'] },
+    { id: 'pettycash', label: 'سندات الصرف', icon: '🧾', roles: ['admin','manager','auditor','accountant'] },
+    { id: 'pettycashfund', label: 'قائمة السلفة', icon: '📒', roles: ['admin','manager','auditor','accountant'] },
   ]},
   { section: 'الإدارة', items: [
     { id: 'fiscal', label: 'السنوات المالية', icon: '📅', roles: ['admin','manager'] },
@@ -97,7 +106,7 @@ const PAGES = [
 function renderSidebar() {
   const nav = document.getElementById('sidebar-nav');
   nav.innerHTML = PAGES.map(sec => {
-    const items = sec.items.filter(it => !it.roles || can(...it.roles));
+    const items = sec.items.filter(it => (!it.roles || can(...it.roles)) && (!it.check || it.check()));
     if (!items.length) return '';
     return `<div class="nav-section">${sec.section}</div>` + items.map(it =>
       `<div class="nav-item" data-page="${it.id}" onclick="go('${it.id}')">
