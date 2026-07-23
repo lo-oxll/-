@@ -68,12 +68,13 @@ function renderTransferForm(root) {
       <button class="btn btn-o btn-sm" style="margin-top:10px" onclick="addTransferRow()">+ إضافة مادة</button>
     </div>`;
   DB.listWarehouses().then(whs => {
-    const opts = whs.map(w => `<option value="${w.id}">${w.code} — ${w.name}</option>`).join('');
+    const fromOpts = scopedWarehouses(whs).map(w => `<option value="${w.id}">${w.code} — ${w.name}</option>`).join('');
+    const toOpts = whs.map(w => `<option value="${w.id}">${w.code} — ${w.name}</option>`).join('');
     document.getElementById('tr-header-fields').innerHTML = `
       <div class="fgroup"><label>رقم المستند *</label><input id="tr-docnum"></div>
       <div class="fgroup"><label>التاريخ *</label><input type="date" id="tr-docdate" value="${todayISO()}"></div>
-      <div class="fgroup"><label>من مخزن *</label><select id="tr-from"><option value="">اختر...</option>${opts}</select></div>
-      <div class="fgroup"><label>إلى مخزن *</label><select id="tr-to"><option value="">اختر...</option>${opts}</select></div>
+      <div class="fgroup"><label>من مخزن *</label><select id="tr-from"><option value="">اختر...</option>${fromOpts}</select></div>
+      <div class="fgroup"><label>إلى مخزن *</label><select id="tr-to"><option value="">اختر...</option>${toOpts}</select></div>
       <div class="fgroup s2"><label>ملاحظات</label><input id="tr-notes"></div>`;
     addTransferRow();
   });
@@ -124,7 +125,7 @@ window.deleteTransferConfirm = async (id, docNum) => {
 //  دليل الموردين
 // ════════════════════════════════════════════════════════════════
 PAGE_RENDER.suppliers = async (root) => {
-  if (!can('admin','accountant','central_accountant')) { root.innerHTML = '<div class="card ec">لا تملك صلاحية الوصول لهذه الصفحة</div>'; return; }
+  if (!can('admin','accountant')) { root.innerHTML = '<div class="card ec">لا تملك صلاحية الوصول لهذه الصفحة</div>'; return; }
   const list = await DB.listSuppliers(false);
   root.innerHTML = `
     <div class="ph"><div><div class="ph-title">🏪 دليل الموردين والمحلات</div></div>
@@ -164,7 +165,7 @@ window.deleteSupplierConfirm = async (id, name) => {
 //  سلف الموظفين
 // ════════════════════════════════════════════════════════════════
 PAGE_RENDER.loans = async (root) => {
-  if (!can('admin','central_accountant')) { root.innerHTML = '<div class="card ec">لا تملك صلاحية الوصول لهذه الصفحة</div>'; return; }
+  if (!canTreasury()) { root.innerHTML = '<div class="card ec">لا تملك صلاحية الوصول لهذه الصفحة</div>'; return; }
   const loans = await DB.listEmployeeLoans();
   root.innerHTML = `
     <div class="ph"><div><div class="ph-title">💳 سلف الموظفين</div><div class="ph-sub">قسط كل سلفة نشطة يُخصم تلقائياً من راتب الموظف عند إضافته لأي كشف راتب جديد، ويقل الرصيد المتبقي تلقائياً عند ترحيل الكشف</div></div>
@@ -211,8 +212,8 @@ window.deleteLoanConfirm = async (id) => {
 //  الأصول الثابتة + الإهلاك
 // ════════════════════════════════════════════════════════════════
 PAGE_RENDER.fixedassets = async (root) => {
-  if (!can('admin','central_accountant','manager','auditor')) { root.innerHTML = '<div class="card ec">لا تملك صلاحية الوصول لهذه الصفحة</div>'; return; }
-  const canWrite = can('admin','central_accountant');
+  if (!(can('admin','manager','auditor') || canTreasury())) { root.innerHTML = '<div class="card ec">لا تملك صلاحية الوصول لهذه الصفحة</div>'; return; }
+  const canWrite = canTreasury();
   const [assets, runs] = await Promise.all([DB.listFixedAssets(), DB.listDepreciationRuns()]);
   const totalCost = assets.reduce((s,a)=>s+Number(a.cost),0);
   const totalDep = assets.reduce((s,a)=>s+Number(a.accum_depreciation),0);
@@ -292,7 +293,7 @@ window.deleteDepRunConfirm = async (id, journalEntryId) => {
 //  الموازنة التقديرية مقابل الفعلي
 // ════════════════════════════════════════════════════════════════
 PAGE_RENDER.budget = async (root) => {
-  if (!can('admin','manager','central_accountant','auditor')) { root.innerHTML = '<div class="card ec">لا تملك صلاحية الوصول لهذه الصفحة</div>'; return; }
+  if (!(can('admin','manager','auditor') || canTreasury())) { root.innerHTML = '<div class="card ec">لا تملك صلاحية الوصول لهذه الصفحة</div>'; return; }
   const years = await DB.listFiscalYears();
   const active = years.find(y => y.is_active) || years[0];
   if (!active) { root.innerHTML = '<div class="card ec">لا توجد سنوات مالية مسجّلة بعد</div>'; return; }
